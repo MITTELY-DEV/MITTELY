@@ -1,0 +1,401 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Admin — MITTELY</title>
+  <meta name="description" content="MITTELY admin panel. Manage products, orders, reviews, submissions, coupons, blog, users, activity, payouts, newsletter, and settings.">
+  <link rel="canonical" href="https://mittely.com/admin.html">
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="theme-color" content="#C6F13C">
+  <link rel="dns-prefetch" href="https://cdnjs.cloudflare.com">
+  <link rel="dns-prefetch" href="https://supabase.co">
+  <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
+  <link rel="preconnect" href="https://supabase.co" crossorigin>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
+  <link rel="stylesheet" href="assets/css/style.css">
+  <script>
+    (function(){var t=localStorage.getItem('mittely-theme');if(!t){t=window.matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light'}document.documentElement.dataset.theme=t})();
+  </script>
+</head>
+<body class="admin-body">
+  <a href="#main-content" class="skip-link">Skip to content</a>
+
+  <!-- Admin gate: not logged in OR non-admin -->
+  <section class="section admin-gate" id="adminGate">
+    <div class="container">
+      <div class="empty-state">
+        <i class="fa-solid fa-user-shield" aria-hidden="true"></i>
+        <h1>Admin access required</h1>
+        <p>Please sign in with an administrator account to continue.</p>
+        <button class="btn btn-google btn-lg" id="adminSignInBtn"><i class="fa-brands fa-google" aria-hidden="true"></i> Continue with Google</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- Forbidden -->
+  <section class="section admin-gate" id="adminForbidden" hidden>
+    <div class="container">
+      <div class="empty-state">
+        <i class="fa-solid fa-lock" aria-hidden="true"></i>
+        <h1>403 — Forbidden</h1>
+        <p>This account doesn't have administrator access.</p>
+        <a href="index.html" class="btn btn-primary">Back to site</a>
+      </div>
+    </div>
+  </section>
+
+  <div class="admin-shell" id="adminShell" hidden>
+
+    <!-- Sidebar -->
+    <aside class="admin-sidebar" id="adminSidebar" aria-label="Admin navigation">
+      <div class="admin-sidebar-head">
+        <a href="index.html" class="navbar-brand"><span class="brand-mark">M</span><span class="brand-name">MITTELY</span></a>
+        <button class="admin-sidebar-close" id="adminSidebarClose" aria-label="Close menu"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button>
+      </div>
+      <nav class="admin-nav">
+        <button class="admin-nav-item is-active" data-section="dashboard"><i class="fa-solid fa-gauge-high" aria-hidden="true"></i><span>Dashboard</span></button>
+        <button class="admin-nav-item" data-section="products"><i class="fa-solid fa-box" aria-hidden="true"></i><span>Products</span></button>
+        <button class="admin-nav-item" data-section="orders"><i class="fa-solid fa-receipt" aria-hidden="true"></i><span>Orders</span></button>
+        <button class="admin-nav-item" data-section="reviews"><i class="fa-solid fa-comment-dots" aria-hidden="true"></i><span>Reviews</span></button>
+        <button class="admin-nav-item" data-section="submissions"><i class="fa-solid fa-inbox" aria-hidden="true"></i><span>Submissions</span></button>
+        <button class="admin-nav-item" data-section="coupons"><i class="fa-solid fa-ticket" aria-hidden="true"></i><span>Coupons</span></button>
+        <button class="admin-nav-item" data-section="blog"><i class="fa-solid fa-newspaper" aria-hidden="true"></i><span>Blog</span></button>
+        <button class="admin-nav-item" data-section="users"><i class="fa-solid fa-users" aria-hidden="true"></i><span>Users</span></button>
+        <button class="admin-nav-item" data-section="activity"><i class="fa-solid fa-clock-rotate-left" aria-hidden="true"></i><span>Activity</span></button>
+        <button class="admin-nav-item" data-section="payouts"><i class="fa-solid fa-money-bill-transfer" aria-hidden="true"></i><span>Payouts</span></button>
+        <button class="admin-nav-item" data-section="newsletter"><i class="fa-solid fa-envelope-open-text" aria-hidden="true"></i><span>Newsletter</span></button>
+        <button class="admin-nav-item" data-section="settings"><i class="fa-solid fa-gear" aria-hidden="true"></i><span>Settings</span></button>
+        <button class="admin-nav-item" data-section="admins"><i class="fa-solid fa-user-shield" aria-hidden="true"></i><span>Admins</span></button>
+      </nav>
+      <a href="index.html" class="admin-view-site" target="_blank" rel="noopener">
+        <i class="fa-solid fa-arrow-up-right-from-square" aria-hidden="true"></i> View site
+      </a>
+    </aside>
+
+    <!-- Main -->
+    <main class="admin-main" id="main-content">
+
+      <header class="admin-topbar">
+        <button class="admin-hamburger" id="adminHamburger" aria-label="Open admin menu"><i class="fa-solid fa-bars" aria-hidden="true"></i></button>
+        <h1 class="admin-page-title" id="adminPageTitle">Dashboard</h1>
+        <div class="admin-topbar-actions">
+          <button class="icon-btn" id="adminThemeToggle" aria-label="Toggle theme"><i class="fa-solid fa-moon" aria-hidden="true"></i></button>
+          <div class="admin-user-chip">
+            <img id="adminAvatar" src="" alt="" width="32" height="32" loading="lazy" decoding="async">
+            <span id="adminEmail">—</span>
+          </div>
+        </div>
+      </header>
+
+      <!-- DASHBOARD -->
+      <section class="admin-section" id="section-dashboard">
+        <div class="stat-grid">
+          <div class="stat-card"><p class="stat-label">Revenue today</p><p class="stat-value" id="statRevenueToday">$0.00</p><p class="stat-sub" id="statRevenueTodayGhs">GH₵ 0.00</p></div>
+          <div class="stat-card"><p class="stat-label">7-day revenue</p><p class="stat-value" id="statRevenue7d">$0.00</p></div>
+          <div class="stat-card"><p class="stat-label">30-day revenue</p><p class="stat-value" id="statRevenue30d">$0.00</p></div>
+          <div class="stat-card"><p class="stat-label">All-time revenue</p><p class="stat-value" id="statRevenueAll">$0.00</p></div>
+          <div class="stat-card"><p class="stat-label">Orders</p><p class="stat-value" id="statOrders">0</p></div>
+          <div class="stat-card"><p class="stat-label">Downloads</p><p class="stat-value" id="statDownloads">0</p></div>
+          <div class="stat-card"><p class="stat-label">Pending reviews</p><p class="stat-value" id="statPendingReviews">0</p></div>
+          <div class="stat-card"><p class="stat-label">Pending submissions</p><p class="stat-value" id="statPendingSubs">0</p></div>
+          <div class="stat-card"><p class="stat-label">Pending payouts</p><p class="stat-value" id="statPendingPayouts">0</p></div>
+        </div>
+
+        <div class="admin-card">
+          <header class="admin-card-head">
+            <h2>Analytics</h2>
+            <div class="chart-switcher" id="chartSwitcher" role="tablist">
+              <button class="chip is-active" data-chart="sales" role="tab">30-Day Sales</button>
+              <button class="chip" data-chart="revenue" role="tab">Revenue Trend</button>
+              <button class="chip" data-chart="status" role="tab">Orders by Status</button>
+              <button class="chip" data-chart="top" role="tab">Top Products</button>
+              <button class="chip" data-chart="downloads" role="tab">Downloads</button>
+            </div>
+            <select id="chartPeriod">
+              <option value="7">Last 7 days</option>
+              <option value="30" selected>Last 30 days</option>
+              <option value="90">Last 90 days</option>
+            </select>
+          </header>
+          <div class="chart-area" id="chartArea">
+            <p class="chart-summary" id="chartSummary">—</p>
+            <div class="chart-canvas" id="chartCanvas"></div>
+          </div>
+        </div>
+
+        <div class="admin-card">
+          <header class="admin-card-head"><h2>Recent orders</h2></header>
+          <div class="table-scroll">
+            <table class="data-table">
+              <thead><tr><th>Date</th><th>Reference</th><th>Email</th><th>Total</th><th>Status</th></tr></thead>
+              <tbody id="adminRecentOrders"><tr><td colspan="5" class="cell-empty">Loading…</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="admin-card">
+          <header class="admin-card-head"><h2>Recent activity</h2></header>
+          <ul class="activity-timeline" id="adminRecentActivity"></ul>
+        </div>
+      </section>
+
+      <!-- PRODUCTS -->
+      <section class="admin-section" id="section-products" hidden>
+        <div class="admin-toolbar">
+          <h2>Products</h2>
+          <button class="btn btn-primary" id="newProductBtn"><i class="fa-solid fa-plus" aria-hidden="true"></i> New product</button>
+        </div>
+        <div class="table-scroll">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Title</th><th>Category</th><th>Price</th><th>Designer</th><th>Flags</th><th>Published</th><th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="adminProductsBody"><tr><td colspan="7" class="cell-empty">Loading…</td></tr></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- ORDERS -->
+      <section class="admin-section" id="section-orders" hidden>
+        <div class="admin-toolbar">
+          <h2>Orders</h2>
+          <div class="admin-toolbar-right">
+            <select id="orderStatusFilter">
+              <option value="">All statuses</option>
+              <option value="pending">Pending</option>
+              <option value="success">Success</option>
+              <option value="failed">Failed</option>
+            </select>
+            <input type="search" id="orderSearch" placeholder="Search email / ref">
+          </div>
+        </div>
+        <div class="table-scroll">
+          <table class="data-table">
+            <thead><tr><th>Date</th><th>Reference</th><th>Email</th><th>Total</th><th>Currency</th><th>Status</th><th>Actions</th></tr></thead>
+            <tbody id="adminOrdersBody"><tr><td colspan="7" class="cell-empty">Loading…</td></tr></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- REVIEWS -->
+      <section class="admin-section" id="section-reviews" hidden>
+        <div class="admin-toolbar">
+          <h2>Reviews</h2>
+          <div class="admin-toolbar-right">
+            <select id="reviewStatusFilter">
+              <option value="pending">Pending</option>
+              <option value="approved">Approved</option>
+              <option value="rejected">Rejected</option>
+              <option value="">All</option>
+            </select>
+            <button class="btn btn-outline btn-sm" id="bulkApproveBtn">Bulk approve</button>
+          </div>
+        </div>
+        <div class="table-scroll">
+          <table class="data-table">
+            <thead><tr><th><input type="checkbox" id="reviewSelectAll" aria-label="Select all"></th><th>Product</th><th>Name</th><th>Rating</th><th>Comment</th><th>Status</th><th>Actions</th></tr></thead>
+            <tbody id="adminReviewsBody"><tr><td colspan="7" class="cell-empty">Loading…</td></tr></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- SUBMISSIONS -->
+      <section class="admin-section" id="section-submissions" hidden>
+        <div class="admin-toolbar">
+          <h2>Submissions</h2>
+          <select id="subStatusFilter">
+            <option value="pending">Pending</option>
+            <option value="accepted">Accepted</option>
+            <option value="rejected">Rejected</option>
+            <option value="">All</option>
+          </select>
+        </div>
+        <div class="table-scroll">
+          <table class="data-table">
+            <thead><tr><th>Date</th><th>Designer</th><th>Product</th><th>Category</th><th>Status</th><th>Actions</th></tr></thead>
+            <tbody id="adminSubsBody"><tr><td colspan="6" class="cell-empty">Loading…</td></tr></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- COUPONS -->
+      <section class="admin-section" id="section-coupons" hidden>
+        <div class="admin-toolbar">
+          <h2>Coupons</h2>
+          <button class="btn btn-primary" id="newCouponBtn"><i class="fa-solid fa-plus" aria-hidden="true"></i> New coupon</button>
+        </div>
+        <div class="table-scroll">
+          <table class="data-table">
+            <thead><tr><th>Code</th><th>Type</th><th>Value</th><th>Min</th><th>Used</th><th>Max</th><th>Expires</th><th>Active</th><th>Actions</th></tr></thead>
+            <tbody id="adminCouponsBody"><tr><td colspan="9" class="cell-empty">Loading…</td></tr></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- BLOG -->
+      <section class="admin-section" id="section-blog" hidden>
+        <div class="admin-toolbar">
+          <h2>Blog posts</h2>
+          <button class="btn btn-primary" id="newPostBtn"><i class="fa-solid fa-plus" aria-hidden="true"></i> New post</button>
+        </div>
+        <div class="table-scroll">
+          <table class="data-table">
+            <thead><tr><th>Title</th><th>Slug</th><th>Status</th><th>Views</th><th>Updated</th><th>Actions</th></tr></thead>
+            <tbody id="adminBlogBody"><tr><td colspan="6" class="cell-empty">Loading…</td></tr></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- USERS -->
+      <section class="admin-section" id="section-users" hidden>
+        <div class="admin-toolbar">
+          <h2>Users</h2>
+          <input type="search" id="userSearch" placeholder="Search email or name">
+        </div>
+        <div class="table-scroll">
+          <table class="data-table">
+            <thead><tr><th>Name</th><th>Email</th><th>Orders</th><th>Spent (USD)</th><th>Downloads</th><th>Wallet</th><th>Actions</th></tr></thead>
+            <tbody id="adminUsersBody"><tr><td colspan="7" class="cell-empty">Loading…</td></tr></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- ACTIVITY -->
+      <section class="admin-section" id="section-activity" hidden>
+        <div class="admin-toolbar">
+          <h2>Activity</h2>
+          <div class="chip-row" id="activityChips">
+            <button class="chip is-active" data-event="">All</button>
+            <button class="chip" data-event="sign_in">Sign-in</button>
+            <button class="chip" data-event="order">Order</button>
+            <button class="chip" data-event="download">Download</button>
+            <button class="chip" data-event="review">Review</button>
+            <button class="chip" data-event="wishlist">Wishlist</button>
+            <button class="chip" data-event="payout_request">Payout request</button>
+            <button class="chip" data-event="payout_paid">Payout paid</button>
+            <button class="chip" data-event="signup">Signup</button>
+          </div>
+        </div>
+        <div class="table-scroll">
+          <table class="data-table">
+            <thead><tr><th>Date</th><th>Email</th><th>Event</th><th>Meta</th></tr></thead>
+            <tbody id="adminActivityBody"><tr><td colspan="4" class="cell-empty">Loading…</td></tr></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- PAYOUTS -->
+      <section class="admin-section" id="section-payouts" hidden>
+        <div class="admin-toolbar">
+          <h2>Payouts</h2>
+        </div>
+        <h3>Pending</h3>
+        <div class="table-scroll">
+          <table class="data-table">
+            <thead><tr><th>Date</th><th>Email</th><th>Amount</th><th>Note</th><th>Actions</th></tr></thead>
+            <tbody id="adminPayoutsPendingBody"><tr><td colspan="5" class="cell-empty">Loading…</td></tr></tbody>
+          </table>
+        </div>
+        <h3>History</h3>
+        <div class="table-scroll">
+          <table class="data-table">
+            <thead><tr><th>Date</th><th>Email</th><th>Amount</th><th>Status</th><th>Note</th></tr></thead>
+            <tbody id="adminPayoutsHistoryBody"><tr><td colspan="5" class="cell-empty">Loading…</td></tr></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- NEWSLETTER -->
+      <section class="admin-section" id="section-newsletter" hidden>
+        <div class="admin-toolbar">
+          <h2>Newsletter</h2>
+          <div class="admin-toolbar-right">
+            <span class="muted" id="newsletterCount">0 subscribers</span>
+            <button class="btn btn-outline" id="exportNewsletterBtn"><i class="fa-solid fa-download" aria-hidden="true"></i> Export CSV</button>
+          </div>
+        </div>
+        <div class="table-scroll">
+          <table class="data-table">
+            <thead><tr><th>Email</th><th>Subscribed</th><th>Actions</th></tr></thead>
+            <tbody id="adminNewsletterBody"><tr><td colspan="3" class="cell-empty">Loading…</td></tr></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- SETTINGS -->
+      <section class="admin-section" id="section-settings" hidden>
+        <div class="admin-toolbar"><h2>Settings</h2></div>
+        <form class="settings-form" id="settingsForm">
+          <div class="form-row">
+            <label for="setHotSale">Hot Sale mode</label>
+            <select id="setHotSale"><option value="off">Off</option><option value="on">On</option></select>
+          </div>
+          <div class="form-row">
+            <label for="setHotSaleEnds">Hot Sale ends at</label>
+            <input type="datetime-local" id="setHotSaleEnds">
+          </div>
+          <div class="form-row">
+            <label for="setBf">Black Friday mode</label>
+            <select id="setBf"><option value="off">Off</option><option value="on">On</option></select>
+          </div>
+          <div class="form-row">
+            <label for="setAnnouncement">Announcement bar</label>
+            <input type="text" id="setAnnouncement" placeholder="Leave empty to hide">
+          </div>
+          <div class="form-row">
+            <label for="setHero">Hero headline override</label>
+            <input type="text" id="setHero" placeholder="Leave empty for default">
+          </div>
+          <div class="form-row">
+            <label for="setFx">FX fallback rate (USD → GHS)</label>
+            <input type="number" id="setFx" step="0.01" min="0">
+          </div>
+          <h3>Social handles</h3>
+          <div class="form-row"><label for="setGithub">GitHub</label><input type="url" id="setGithub" placeholder="https://github.com/…"></div>
+          <div class="form-row"><label for="setX">X (Twitter)</label><input type="url" id="setX" placeholder="https://x.com/…"></div>
+          <div class="form-row"><label for="setTelegram">Telegram</label><input type="url" id="setTelegram" placeholder="https://t.me/…"></div>
+          <div class="form-row"><label for="setInstagram">Instagram</label><input type="url" id="setInstagram" placeholder="https://instagram.com/…"></div>
+          <div class="form-row"><label for="setLinkedin">LinkedIn</label><input type="url" id="setLinkedin" placeholder="https://linkedin.com/…"></div>
+          <div class="form-row"><label for="setYoutube">YouTube</label><input type="url" id="setYoutube" placeholder="https://youtube.com/…"></div>
+          <div class="form-row"><label for="setDiscord">Discord</label><input type="url" id="setDiscord" placeholder="https://discord.gg/…"></div>
+          <button class="btn btn-primary" type="submit" id="saveSettingsBtn">Save settings</button>
+          <p class="form-success" id="settingsSaved" hidden>Saved.</p>
+        </form>
+      </section>
+
+      <!-- ADMINS -->
+      <section class="admin-section" id="section-admins" hidden>
+        <div class="admin-toolbar">
+          <h2>Admins</h2>
+          <form class="inline-form" id="addAdminForm">
+            <input type="email" id="newAdminEmail" placeholder="new-admin@example.com" required>
+            <button class="btn btn-primary" type="submit">Add admin</button>
+          </form>
+        </div>
+        <div class="table-scroll">
+          <table class="data-table">
+            <thead><tr><th>Email</th><th>Actions</th></tr></thead>
+            <tbody id="adminAdminsBody"><tr><td colspan="2" class="cell-empty">Loading…</td></tr></tbody>
+          </table>
+        </div>
+      </section>
+
+    </main>
+  </div>
+
+  <div class="toast-container" id="toastContainer" aria-live="polite" aria-atomic="true"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="config.js"></script>
+  <script src="assets/js/supabase-client.js"></script>
+  <script src="assets/js/main.js"></script>
+  <script src="assets/js/theme.js"></script>
+  <script src="assets/js/currency.js"></script>
+  <script src="assets/js/auth.js"></script>
+  <script src="assets/js/cart.js"></script>
+  <script src="assets/js/admin.js"></script>
+</body>
+</html>

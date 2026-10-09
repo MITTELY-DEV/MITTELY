@@ -1,0 +1,16 @@
+# MITTELY — robots.txt
+# Allow all crawlers, point to sitemap.
+
+User-agent: *
+Allow: /
+
+# Do not index private / authenticated pages
+Disallow: /admin.html
+Disallow: /dashboard.html
+Disallow: /checkout.html
+Disallow: /cart.html
+Disallow: /order-success.html
+Disallow: /order-failed.html
+Disallow: /freebies.html
+
+Sitemap: https://mittely.com/sitemap.xml

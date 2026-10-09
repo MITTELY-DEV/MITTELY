@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Checkout — MITTELY</title>
+  <meta name="description" content="Secure checkout with Paystack. Pay in USD or GHS and get instant access to your MITTELY purchases. Complete your order now.">
+  <link rel="canonical" href="https://mittely.com/checkout.html">
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="theme-color" content="#C6F13C">
+  <link rel="dns-prefetch" href="https://cdnjs.cloudflare.com">
+  <link rel="dns-prefetch" href="https://supabase.co">
+  <link rel="dns-prefetch" href="https://js.paystack.co">
+  <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
+  <link rel="preconnect" href="https://supabase.co" crossorigin>
+  <link rel="preconnect" href="https://js.paystack.co" crossorigin>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
+  <link rel="stylesheet" href="assets/css/style.css">
+  <script>
+    (function(){var t=localStorage.getItem('mittely-theme');if(!t){t=window.matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light'}document.documentElement.dataset.theme=t})();
+  </script>
+</head>
+<body>
+  <a href="#main-content" class="skip-link">Skip to content</a>
+
+  <div class="announcement-bar" id="announcementBar" hidden>
+    <span id="announcementText"></span>
+    <button class="announcement-close" aria-label="Dismiss announcement" id="announcementClose"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button>
+  </div>
+
+  <header class="navbar" id="navbar">
+    <div class="container navbar-inner">
+      <a href="index.html" class="navbar-brand" aria-label="MITTELY home">
+        <span class="brand-mark">M</span><span class="brand-name">MITTELY</span>
+      </a>
+      <nav class="navbar-links" aria-label="Primary">
+        <a href="store.html">Store</a>
+        <a href="freebies.html">Freebies</a>
+        <a href="blog.html">Blog</a>
+        <a href="reviews.html">Reviews</a>
+        <a href="why-mitley.html">Why MITTELY</a>
+      </nav>
+      <div class="navbar-actions">
+        <button class="icon-btn" id="searchToggle" aria-label="Search"><i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i></button>
+        <button class="icon-btn" id="themeToggle" aria-label="Toggle theme"><i class="fa-solid fa-moon" aria-hidden="true"></i></button>
+        <div class="currency-switcher">
+          <button class="currency-btn" id="currencyToggle" aria-label="Change currency"><span id="currencyLabel">USD</span> <i class="fa-solid fa-chevron-down" aria-hidden="true"></i></button>
+        </div>
+        <a href="cart.html" class="icon-btn cart-btn" aria-label="Cart"><i class="fa-solid fa-cart-shopping" aria-hidden="true"></i><span class="cart-badge" id="cartBadge" hidden>0</span></a>
+        <button class="icon-btn" id="wishlistNavBtn" aria-label="Wishlist"><i class="fa-regular fa-heart" aria-hidden="true"></i></button>
+        <div id="authNavSlot"><button class="btn btn-outline btn-sm" id="signInNavBtn">Sign in</button></div>
+        <button class="hamburger" id="hamburger" aria-label="Menu" aria-expanded="false"><i class="fa-solid fa-bars" aria-hidden="true"></i></button>
+      </div>
+    </div>
+  </header>
+
+  <div class="mobile-drawer" id="mobileDrawer" aria-hidden="true">
+    <div class="mobile-drawer-inner">
+      <a href="store.html">Store</a>
+      <a href="freebies.html">Freebies</a>
+      <a href="blog.html">Blog</a>
+      <a href="reviews.html">Reviews</a>
+      <a href="why-mitley.html">Why MITTELY</a>
+      <a href="license.html">License</a>
+      <a href="sell-with-us.html">Sell with us</a>
+    </div>
+  </div>
+
+  <main class="site-main" id="main-content">
+
+    <section class="page-header">
+      <div class="container">
+        <nav class="breadcrumbs" aria-label="Breadcrumb">
+          <ol>
+            <li><a href="index.html">Home</a></li>
+            <li><a href="cart.html">Cart</a></li>
+            <li aria-current="page">Checkout</li>
+          </ol>
+        </nav>
+        <p class="eyebrow">Step 2 of 2</p>
+        <h1>Checkout</h1>
+        <p class="page-sub">Sign in with Google to complete your order. Payment is handled securely by Paystack.</p>
+      </div>
+    </section>
+
+    <section class="section checkout-section">
+      <div class="container checkout-layout">
+        <div class="checkout-main">
+          <div class="checkout-card">
+            <h2>Your details</h2>
+            <div id="checkoutAuthBlock">
+              <div class="empty-state compact" id="checkoutSignInPrompt">
+                <i class="fa-solid fa-user" aria-hidden="true"></i>
+                <h3>Sign in to continue</h3>
+                <p>Use your Google account — takes 5 seconds.</p>
+                <button class="btn btn-google" id="checkoutSignInBtn"><i class="fa-brands fa-google" aria-hidden="true"></i> Continue with Google</button>
+              </div>
+              <div id="checkoutUserInfo" hidden>
+                <div class="user-chip">
+                  <img id="checkoutAvatar" src="" alt="" width="48" height="48" loading="lazy" decoding="async">
+                  <div>
+                    <p class="user-chip-name" id="checkoutName">—</p>
+                    <p class="user-chip-email" id="checkoutEmail">—</p>
+                  </div>
+                  <button class="btn btn-ghost btn-sm" id="checkoutSwitchBtn">Switch</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="checkout-card">
+            <h2>Payment</h2>
+            <p class="muted">You'll be charged in <strong id="checkoutCurrencyLabel">USD</strong>. You can switch currency above.</p>
+            <button class="btn btn-primary btn-lg btn-block" id="payNowBtn" disabled>Pay with Paystack <i class="fa-solid fa-lock" aria-hidden="true"></i></button>
+            <p class="form-error" id="checkoutError" role="alert" hidden></p>
+            <ul class="checkout-trust">
+              <li><i class="fa-solid fa-shield-halved" aria-hidden="true"></i> PCI-compliant processing</li>
+              <li><i class="fa-solid fa-bolt" aria-hidden="true"></i> Instant download after verification</li>
+              <li><i class="fa-solid fa-lock" aria-hidden="true"></i> We never see your card details</li>
+            </ul>
+          </div>
+        </div>
+
+        <aside class="checkout-summary" aria-label="Order summary">
+          <h2>Order summary</h2>
+          <div id="checkoutItems" class="checkout-items"></div>
+          <dl class="summary-list">
+            <div><dt>Subtotal</dt><dd id="checkoutSubtotal">$0.00</dd></div>
+            <div id="checkoutDiscountRow" hidden><dt>Discount</dt><dd id="checkoutDiscount">-$0.00</dd></div>
+            <div><dt>Total</dt><dd class="summary-total" id="checkoutTotal">$0.00</dd></div>
+          </dl>
+          <a href="cart.html" class="btn btn-ghost btn-block"><i class="fa-solid fa-arrow-left" aria-hidden="true"></i> Back to cart</a>
+        </aside>
+      </div>
+    </section>
+
+  </main>
+
+  <footer class="site-footer">
+    <div class="container footer-grid">
+      <div class="footer-brand">
+        <a href="index.html" class="navbar-brand"><span class="brand-mark">M</span><span class="brand-name">MITTELY</span></a>
+        <p>Independent design marketplace. Premium UI kits, dashboards, and templates with fair 70/30 pay for designers.</p>
+        <div class="footer-social" id="footerSocial"></div>
+      </div>
+      <div class="footer-col"><h3>Shop</h3><a href="store.html">All products</a><a href="freebies.html">Freebies</a><a href="license.html">License</a></div>
+      <div class="footer-col"><h3>Company</h3><a href="why-mitley.html">Why MITTELY</a><a href="sell-with-us.html">Sell with us</a><a href="blog.html">Blog</a></div>
+      <div class="footer-col"><h3>Account</h3><a href="dashboard.html">Dashboard</a><a href="cart.html">Cart</a><a href="reviews.html">Reviews</a></div>
+      <div class="footer-col"><h3>Currency</h3><div class="currency-switcher" id="footerCurrency"></div></div>
+    </div>
+    <div class="container footer-bottom">
+      <p>&copy; <span id="footerYear"></span> MITTELY. All rights reserved.</p>
+      <p>Made with <i class="fa-solid fa-heart" aria-hidden="true"></i> for independent designers.</p>
+    </div>
+  </footer>
+
+  <div class="modal-overlay" id="signInModal" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="signInTitle">
+    <div class="modal-card">
+      <button class="modal-close" id="signInClose" aria-label="Close sign-in"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button>
+      <div class="modal-logo"><span class="brand-mark">M</span></div>
+      <h2 id="signInTitle">Welcome to MITTELY</h2>
+      <p class="modal-sub">Sign in with your Google account — it takes 5 seconds.</p>
+      <button class="btn btn-google btn-lg" id="googleSignInBtn"><i class="fa-brands fa-google" aria-hidden="true"></i> Continue with Google</button>
+      <ul class="trust-list">
+        <li><i class="fa-solid fa-bolt" aria-hidden="true"></i> Instant access to downloads</li>
+        <li><i class="fa-solid fa-shield-halved" aria-hidden="true"></i> Secure Google sign-in</li>
+        <li><i class="fa-solid fa-key" aria-hidden="true"></i> No password needed</li>
+      </ul>
+      <p class="modal-fineprint">By continuing you agree to our <a href="license.html">license terms</a>.</p>
+      <p class="form-error" id="signInError" role="alert" hidden></p>
+    </div>
+  </div>
+
+  <div class="search-overlay" id="searchOverlay" aria-hidden="true">
+    <div class="search-panel">
+      <div class="search-input-row">
+        <i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i>
+        <input type="search" id="searchInput" placeholder="Search products, blog posts…" autocomplete="off" aria-label="Search">
+        <button class="icon-btn" id="searchClose" aria-label="Close search"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button>
+      </div>
+      <div class="search-results" id="searchResults"></div>
+    </div>
+  </div>
+
+  <div class="toast-container" id="toastContainer" aria-live="polite" aria-atomic="true"></div>
+  <button class="back-to-top" id="backToTop" aria-label="Back to top"><i class="fa-solid fa-arrow-up" aria-hidden="true"></i></button>
+  <div class="scroll-progress" id="scrollProgress"></div>
+
+  <nav class="mobile-bottom-bar" aria-label="Quick navigation">
+    <a href="store.html"><i class="fa-solid fa-box" aria-hidden="true"></i><span>Store</span></a>
+    <a href="cart.html"><i class="fa-solid fa-cart-shopping" aria-hidden="true"></i><span>Cart</span></a>
+    <a href="#" id="mobileWishlist"><i class="fa-regular fa-heart" aria-hidden="true"></i><span>Wishlist</span></a>
+    <a href="dashboard.html"><i class="fa-solid fa-user" aria-hidden="true"></i><span>Account</span></a>
+  </nav>
+
+  <script src="https://js.paystack.co/v1/inline.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="config.js"></script>
+  <script src="assets/js/supabase-client.js"></script>
+  <script src="assets/js/main.js"></script>
+  <script src="assets/js/theme.js"></script>
+  <script src="assets/js/currency.js"></script>
+  <script src="assets/js/auth.js"></script>
+  <script src="assets/js/cart.js"></script>
+  <script src="assets/js/checkout.js"></script>
+</body>
+</html>
