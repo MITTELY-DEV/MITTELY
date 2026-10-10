@@ -3,7 +3,7 @@
 
   <url>
     <loc>https://mittely.com/</loc>
-    <changefreq>weekly</changefreq>
+    <changefreq>daily</changefreq>
     <priority>1.0</priority>
   </url>
 
@@ -14,21 +14,42 @@
   </url>
 
   <url>
-    <loc>https://mittely.com/why-mitley.html</loc>
-    <changefreq>monthly</changefreq>
-    <priority>0.7</priority>
+    <loc>https://mittely.com/blog.html</loc>
+    <changefreq>daily</changefreq>
+    <priority>0.8</priority>
   </url>
 
   <url>
-    <loc>https://mittely.com/reviews.html</loc>
+    <loc>https://mittely.com/freebies.html</loc>
     <changefreq>weekly</changefreq>
     <priority>0.7</priority>
   </url>
 
   <url>
+    <loc>https://mittely.com/reviews.html</loc>
+    <changefreq>daily</changefreq>
+    <priority>0.7</priority>
+  </url>
+
+  <url>
+    <loc>https://mittely.com/why-mitley.html</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.6</priority>
+  </url>
+
+  <url>
     <loc>https://mittely.com/license.html</loc>
-    <changefreq>yearly</changefreq>
+    <changefreq>monthly</changefreq>
     <priority>0.5</priority>
   </url>
+
+  <url>
+    <loc>https://mittely.com/sell-with-us.html</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.6</priority>
+  </url>
+
+  <!-- Dynamic product pages pattern: https://mittely.com/product.html?slug=SLUG -->
+  <!-- Dynamic blog articles pattern: https://mittely.com/blog.html?slug=SLUG -->
 
 </urlset>

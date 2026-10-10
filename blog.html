@@ -2,255 +2,279 @@
 <html lang="en" data-theme="light">
 <head>
   <meta charset="UTF-8">
+  <meta name="google-site-verification" content="qwkL7FSYwlRQWLvPzXoGMjHmF3H7zJmnwtWEaB9jRnM">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Blog — Design Notes & Guides | MITTELY</title>
-  <meta name="description" content="Deep dives on UI design, product craft, and independent design business. Read the MITTELY blog for guides, teardowns, and creator stories. Explore now.">
+  <meta name="theme-color" content="#F9F9F7" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#141814" media="(prefers-color-scheme: dark)">
+  <meta name="keywords" content="ui kits, design templates, dashboard templates, landing pages, figma files, design marketplace, front-end components">
+  <meta name="author" content="MITTELY">
+  <meta name="robots" content="index, follow, max-image-preview:large">
   <link rel="canonical" href="https://mittely.com/blog.html">
-  <meta name="robots" content="index, follow">
-  <meta name="theme-color" content="#C6F13C">
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='24' fill='%231A1F1A'/%3E%3Ctext x='50' y='68' font-family='Inter,sans-serif' font-size='60' font-weight='900' fill='%23C6F13C' text-anchor='middle'%3EM%3C/text%3E%3C/svg%3E">
+  <link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='24' fill='%231A1F1A'/%3E%3Ctext x='50' y='68' font-family='Inter,sans-serif' font-size='60' font-weight='900' fill='%23C6F13C' text-anchor='middle'%3EM%3C/text%3E%3C/svg%3E">
   <meta property="og:type" content="website">
-  <meta property="og:url" content="https://mittely.com/blog.html">
-  <meta property="og:title" content="Blog — Design Notes & Guides | MITTELY">
-  <meta property="og:description" content="Deep dives on UI design, product craft, and independent design business.">
   <meta property="og:site_name" content="MITTELY">
-  <meta property="og:image" content="https://mittely.com/assets/img/og-default.jpg">
+  <meta property="og:title" content="Blog — Design Resources & Tutorials | MITTELY">
+  <meta property="og:description" content="Insights on UI design, dashboard architecture, and building premium digital products. From the MITTELY team and community.">
+  <meta property="og:url" content="https://mittely.com/blog.html">
+  <meta property="og:image" content="https://mittely.com/assets/og/og-home.jpg">
   <meta property="og:image:width" content="1200">
   <meta property="og:image:height" content="630">
-  <meta property="og:image:alt" content="MITTELY blog — design notes and guides">
+  <meta property="og:image:alt" content="MITTELY Blog">
+  <meta property="og:locale" content="en_US">
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="Blog — Design Notes & Guides | MITTELY">
-  <meta name="twitter:description" content="Deep dives on UI design, product craft, and independent design business.">
-  <meta name="twitter:image" content="https://mittely.com/assets/img/og-default.jpg">
-  <link rel="dns-prefetch" href="https://cdnjs.cloudflare.com">
+  <meta name="twitter:site" content="@mittely">
+  <meta name="twitter:creator" content="@mittely">
+  <meta name="twitter:title" content="Blog — Design Resources & Tutorials | MITTELY">
+  <meta name="twitter:description" content="Insights on UI design, dashboard architecture, and building premium digital products.">
+  <meta name="twitter:image" content="https://mittely.com/assets/og/og-home.jpg">
+  <title>Blog — Design Resources & Tutorials | MITTELY</title>
+  <meta name="description" content="Insights on UI design, dashboard architecture, and building premium digital products. From the MITTELY team and community. Read now.">
+  <link rel="preconnect" href="https://supabase.co">
   <link rel="dns-prefetch" href="https://supabase.co">
-  <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
-  <link rel="preconnect" href="https://supabase.co" crossorigin>
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
-  <link rel="stylesheet" href="assets/css/style.css">
+  <link rel="preconnect" href="https://js.paystack.co">
+  <link rel="dns-prefetch" href="https://js.paystack.co">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
   <script>
-    (function(){var t=localStorage.getItem('mittely-theme');if(!t){t=window.matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light'}document.documentElement.dataset.theme=t})();
+    (function(){
+      var t = localStorage.getItem('mittely-theme');
+      if (!t) t = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+      document.documentElement.dataset.theme = t;
+    })();
   </script>
+  <link rel="stylesheet" href="assets/css/style.css">
 </head>
 <body>
-  <a href="#main-content" class="skip-link">Skip to content</a>
-
-  <div class="announcement-bar" id="announcementBar" hidden>
+  <div id="announcementBar" class="announcement-bar" style="display:none;">
     <span id="announcementText"></span>
-    <button class="announcement-close" aria-label="Dismiss announcement" id="announcementClose"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button>
+    <button class="announcement-close" aria-label="Dismiss announcement"><i class="fa-solid fa-xmark"></i></button>
   </div>
 
-  <header class="navbar" id="navbar">
-    <div class="container navbar-inner">
+  <header class="site-header">
+    <nav class="navbar container">
       <a href="index.html" class="navbar-brand" aria-label="MITTELY home">
-        <span class="brand-mark">M</span><span class="brand-name">MITTELY</span>
+        <span class="brand-mark">M</span>
+        <span class="brand-name">MITTELY</span>
       </a>
-      <nav class="navbar-links" aria-label="Primary">
-        <a href="store.html">Store</a>
-        <a href="freebies.html">Freebies</a>
-        <a href="blog.html" aria-current="page">Blog</a>
-        <a href="reviews.html">Reviews</a>
-        <a href="why-mitley.html">Why MITTELY</a>
-      </nav>
-      <div class="navbar-actions">
-        <button class="icon-btn" id="searchToggle" aria-label="Search"><i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i></button>
-        <button class="icon-btn" id="themeToggle" aria-label="Toggle theme"><i class="fa-solid fa-moon" aria-hidden="true"></i></button>
-        <div class="currency-switcher">
-          <button class="currency-btn" id="currencyToggle" aria-label="Change currency"><span id="currencyLabel">USD</span> <i class="fa-solid fa-chevron-down" aria-hidden="true"></i></button>
+
+      <button class="hamburger" id="hamburgerBtn" aria-label="Open menu" aria-expanded="false">
+        <span></span><span></span><span></span>
+      </button>
+
+      <div class="nav-drawer" id="navDrawer">
+        <div class="drawer-header">
+          <span class="brand-mark">M</span>
+          <button class="drawer-close" id="drawerClose" aria-label="Close menu"><i class="fa-solid fa-xmark"></i></button>
         </div>
-        <a href="cart.html" class="icon-btn cart-btn" aria-label="Cart"><i class="fa-solid fa-cart-shopping" aria-hidden="true"></i><span class="cart-badge" id="cartBadge" hidden>0</span></a>
-        <button class="icon-btn" id="wishlistNavBtn" aria-label="Wishlist"><i class="fa-regular fa-heart" aria-hidden="true"></i></button>
-        <div id="authNavSlot"><button class="btn btn-outline btn-sm" id="signInNavBtn">Sign in</button></div>
-        <button class="hamburger" id="hamburger" aria-label="Menu" aria-expanded="false"><i class="fa-solid fa-bars" aria-hidden="true"></i></button>
+        <ul class="nav-links">
+          <li><a href="store.html">Store</a></li>
+          <li><a href="freebies.html">Freebies</a></li>
+          <li><a href="why-mitley.html">Why MITTELY</a></li>
+          <li><a href="reviews.html">Reviews</a></li>
+          <li><a href="blog.html">Blog</a></li>
+          <li><a href="sell-with-us.html">Sell with us</a></li>
+        </ul>
+        <div class="drawer-auth" id="drawerAuthArea"></div>
       </div>
-    </div>
+
+      <div class="nav-actions">
+        <div class="currency-switcher" id="currencySwitcherNav">
+          <button class="currency-btn active" data-currency="USD">$ USD</button>
+          <button class="currency-btn" data-currency="GHS">₵ GHS</button>
+        </div>
+        <button class="icon-btn" id="searchOpenBtn" aria-label="Search"><i class="fa-solid fa-magnifying-glass"></i></button>
+        <a href="cart.html" class="icon-btn cart-btn" aria-label="Cart">
+          <i class="fa-solid fa-cart-shopping"></i>
+          <span class="cart-badge" id="cartBadge">0</span>
+        </a>
+        <a href="dashboard.html" class="icon-btn wishlist-btn" aria-label="Wishlist"><i class="fa-solid fa-heart"></i></a>
+        <div class="auth-nav-area" id="authNavArea"></div>
+      </div>
+    </nav>
   </header>
 
-  <div class="mobile-drawer" id="mobileDrawer" aria-hidden="true">
-    <div class="mobile-drawer-inner">
-      <a href="store.html">Store</a>
-      <a href="freebies.html">Freebies</a>
-      <a href="blog.html">Blog</a>
-      <a href="reviews.html">Reviews</a>
-      <a href="why-mitley.html">Why MITTELY</a>
-      <a href="license.html">License</a>
-      <a href="sell-with-us.html">Sell with us</a>
-    </div>
-  </div>
-
-  <main class="site-main" id="main-content">
-
-    <!-- LISTING VIEW -->
-    <section class="page-header blog-listing-head" id="blogListing">
-      <div class="container">
-        <nav class="breadcrumbs" aria-label="Breadcrumb">
-          <ol>
-            <li><a href="index.html">Home</a></li>
-            <li aria-current="page">Blog</li>
-          </ol>
-        </nav>
-        <p class="eyebrow">Design notes</p>
-        <h1>MITTELY Blog</h1>
-        <p class="page-sub">Deep dives on UI design, product craft, and the independent design business.</p>
-      </div>
-    </section>
-
-    <section class="section" id="blogListingSection">
-      <div class="container">
-        <div class="blog-toolbar">
-          <div class="chip-row" id="blogTags"></div>
-          <div class="blog-search-row">
-            <label for="blogSearch" class="sr-only">Search articles</label>
-            <input type="search" id="blogSearch" placeholder="Search articles…" autocomplete="off">
-          </div>
-        </div>
-
-        <div class="blog-grid" id="blogGrid">
-          <div class="card skeleton-card" aria-hidden="true"></div>
-          <div class="card skeleton-card" aria-hidden="true"></div>
-          <div class="card skeleton-card" aria-hidden="true"></div>
-          <div class="card skeleton-card" aria-hidden="true"></div>
-          <div class="card skeleton-card" aria-hidden="true"></div>
-          <div class="card skeleton-card" aria-hidden="true"></div>
-        </div>
-
-        <div class="empty-state" id="blogEmpty" hidden>
-          <i class="fa-regular fa-newspaper" aria-hidden="true"></i>
-          <h3>No articles yet</h3>
-          <p>We're writing. Check back soon.</p>
-          <a href="store.html" class="btn btn-primary">Browse store</a>
-        </div>
-
-        <nav class="pagination" id="blogPagination" aria-label="Pagination"></nav>
-      </div>
-    </section>
-
-    <!-- ARTICLE VIEW -->
-    <article class="article-view" id="articleView" hidden>
-      <div class="article-cover">
+  <main class="site-main">
+    <!-- LISTING MODE -->
+    <div id="blogListingMode">
+      <div class="page-header">
         <div class="container">
-          <nav class="breadcrumbs" aria-label="Breadcrumb">
-            <ol id="articleBreadcrumbs">
-              <li><a href="index.html">Home</a></li>
-              <li><a href="blog.html">Blog</a></li>
-              <li aria-current="page" id="articleCrumb">Article</li>
-            </ol>
-          </nav>
-          <div class="article-cover-frame">
-            <img id="articleCover" src="" alt="" width="1200" height="675" fetchpriority="high" decoding="async">
-          </div>
-          <div class="article-head">
-            <div class="chip-row" id="articleTags"></div>
-            <h1 id="articleTitle">Loading…</h1>
-            <div class="article-meta">
-              <div class="article-author">
-                <img id="articleAuthorAvatar" src="" alt="" width="40" height="40" loading="lazy" decoding="async">
-                <span id="articleAuthorName">Author</span>
-              </div>
-              <span class="meta-dot" aria-hidden="true">•</span>
-              <time id="articleDate" datetime="">—</time>
-              <span class="meta-dot" aria-hidden="true">•</span>
-              <span id="articleReadingTime">— min read</span>
-              <span class="meta-dot" aria-hidden="true">•</span>
-              <span class="article-views"><i class="fa-regular fa-eye" aria-hidden="true"></i> <span id="articleViews">0</span></span>
+          <span class="eyebrow"><i class="fa-solid fa-newspaper"></i> Insights</span>
+          <h1>Blog</h1>
+          <p>Design resources, tutorials, and product thinking from MITTELY.</p>
+        </div>
+      </div>
+
+      <section class="section">
+        <div class="container">
+          <div class="blog-toolbar">
+            <div class="store-search">
+              <i class="fa-solid fa-magnifying-glass"></i>
+              <input type="text" id="blogSearch" placeholder="Search articles..." aria-label="Search articles">
+            </div>
+            <div class="blog-tags" id="blogTagFilter">
+              <button class="chip active" data-tag="">All</button>
             </div>
           </div>
-        </div>
-      </div>
 
-      <div class="container article-body">
-        <div class="article-content" id="articleContent"></div>
-
-        <div class="article-share">
-          <span>Share</span>
-          <a href="#" id="shareX" class="share-btn" target="_blank" rel="noopener" aria-label="Share on X"><i class="fa-brands fa-x-twitter" aria-hidden="true"></i></a>
-          <a href="#" id="shareLinkedIn" class="share-btn" target="_blank" rel="noopener" aria-label="Share on LinkedIn"><i class="fa-brands fa-linkedin" aria-hidden="true"></i></a>
-          <button class="share-btn" id="shareCopy" aria-label="Copy link"><i class="fa-solid fa-link" aria-hidden="true"></i></button>
-        </div>
-
-        <div class="article-back">
-          <a href="blog.html" class="btn btn-ghost"><i class="fa-solid fa-arrow-left" aria-hidden="true"></i> Back to blog</a>
-        </div>
-      </div>
-
-      <section class="section section-alt" id="relatedSection" hidden>
-        <div class="container">
-          <div class="section-head">
-            <p class="eyebrow">Keep reading</p>
-            <h2>Related articles</h2>
+          <div class="blog-grid" id="blogGrid">
+            <div class="skeleton-card"></div>
+            <div class="skeleton-card"></div>
+            <div class="skeleton-card"></div>
           </div>
-          <div class="blog-grid" id="relatedPosts"></div>
+
+          <div class="empty-state" id="blogEmpty" style="display:none;">
+            <i class="fa-solid fa-file-lines"></i>
+            <h3>No articles found</h3>
+            <p>Try a different search or tag.</p>
+          </div>
+
+          <div class="pagination" id="blogPagination"></div>
         </div>
       </section>
-    </article>
+    </div>
 
-    <!-- ARTICLE 404 BLOCK -->
-    <section class="section not-found-inline" id="articleNotFound" hidden>
-      <div class="container empty-state">
-        <i class="fa-solid fa-newspaper" aria-hidden="true"></i>
-        <h2>Article not found</h2>
-        <p>That post may have been removed or the link is incorrect.</p>
-        <a href="blog.html" class="btn btn-primary">All articles</a>
+    <!-- ARTICLE MODE -->
+    <div id="blogArticleMode" style="display:none;">
+      <div class="container">
+        <nav class="breadcrumbs" id="articleBreadcrumbs" aria-label="Breadcrumb">
+          <a href="index.html">Home</a> <i class="fa-solid fa-chevron-right"></i>
+          <a href="blog.html">Blog</a> <i class="fa-solid fa-chevron-right"></i>
+          <span id="articleBreadcrumbCurrent"></span>
+        </nav>
+      </div>
+
+      <article class="section article-section">
+        <div class="container article-container">
+          <div class="article-hero">
+            <img id="articleCover" src="" alt="" width="1200" height="600" fetchpriority="high" decoding="async">
+          </div>
+          <h1 id="articleTitle"></h1>
+          <div class="article-meta" id="articleMeta"></div>
+          <div class="article-content" id="articleContent"></div>
+          <div class="article-tags" id="articleTags"></div>
+          <div class="article-share">
+            <span>Share:</span>
+            <a href="#" id="shareX" target="_blank" rel="noopener" aria-label="Share on X"><i class="fa-brands fa-x-twitter"></i></a>
+            <a href="#" id="shareLinkedIn" target="_blank" rel="noopener" aria-label="Share on LinkedIn"><i class="fa-brands fa-linkedin"></i></a>
+            <button id="shareCopy" aria-label="Copy link"><i class="fa-solid fa-link"></i></button>
+            <a href="#" id="shareEmail" aria-label="Share by email"><i class="fa-solid fa-envelope"></i></a>
+          </div>
+          <div class="article-back">
+            <a href="blog.html" class="btn btn-outline"><i class="fa-solid fa-arrow-left"></i> Back to blog</a>
+          </div>
+        </div>
+      </article>
+
+      <section class="section" id="relatedPostsSection" style="display:none;">
+        <div class="container">
+          <div class="section-header">
+            <span class="eyebrow"><i class="fa-solid fa-layer-group"></i> Related</span>
+            <h2>Keep reading</h2>
+          </div>
+          <div class="blog-grid" id="relatedPostsGrid"></div>
+        </div>
+      </section>
+    </div>
+
+    <!-- ARTICLE NOT FOUND -->
+    <section class="section" id="blogNotFound" style="display:none;">
+      <div class="container">
+        <div class="empty-state">
+          <i class="fa-solid fa-circle-exclamation"></i>
+          <h3>Article not found</h3>
+          <p>The article you're looking for doesn't exist or has been removed.</p>
+          <a href="blog.html" class="btn btn-primary">Back to blog</a>
+        </div>
       </div>
     </section>
-
   </main>
 
   <footer class="site-footer">
     <div class="container footer-grid">
       <div class="footer-brand">
-        <a href="index.html" class="navbar-brand"><span class="brand-mark">M</span><span class="brand-name">MITTELY</span></a>
-        <p>Independent design marketplace. Premium UI kits, dashboards, and templates with fair 70/30 pay for designers.</p>
+        <span class="brand-mark">M</span>
+        <span class="brand-name">MITTELY</span>
+        <p>Independent design marketplace for premium UI kits and templates.</p>
         <div class="footer-social" id="footerSocial"></div>
       </div>
-      <div class="footer-col"><h3>Shop</h3><a href="store.html">All products</a><a href="freebies.html">Freebies</a><a href="license.html">License</a></div>
-      <div class="footer-col"><h3>Company</h3><a href="why-mitley.html">Why MITTELY</a><a href="sell-with-us.html">Sell with us</a><a href="blog.html">Blog</a></div>
-      <div class="footer-col"><h3>Account</h3><a href="dashboard.html">Dashboard</a><a href="cart.html">Cart</a><a href="reviews.html">Reviews</a></div>
-      <div class="footer-col"><h3>Currency</h3><div class="currency-switcher" id="footerCurrency"></div></div>
+      <div class="footer-col">
+        <h4>Marketplace</h4>
+        <ul>
+          <li><a href="store.html">Store</a></li>
+          <li><a href="freebies.html">Freebies</a></li>
+          <li><a href="reviews.html">Reviews</a></li>
+          <li><a href="blog.html">Blog</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h4>Company</h4>
+        <ul>
+          <li><a href="why-mitley.html">Why MITTELY</a></li>
+          <li><a href="sell-with-us.html">Sell with us</a></li>
+          <li><a href="license.html">License</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h4>Account</h4>
+        <ul>
+          <li><a href="dashboard.html">Dashboard</a></li>
+          <li><a href="cart.html">Cart</a></li>
+        </ul>
+      </div>
     </div>
-    <div class="container footer-bottom">
-      <p>&copy; <span id="footerYear"></span> MITTELY. All rights reserved.</p>
-      <p>Made with <i class="fa-solid fa-heart" aria-hidden="true"></i> for independent designers.</p>
+    <div class="footer-bottom container">
+      <p>&copy; 2025 MITTELY. All rights reserved.</p>
+      <div class="currency-switcher" id="currencySwitcherFooter">
+        <button class="currency-btn active" data-currency="USD">$ USD</button>
+        <button class="currency-btn" data-currency="GHS">₵ GHS</button>
+      </div>
     </div>
   </footer>
 
-  <div class="modal-overlay" id="signInModal" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="signInTitle">
-    <div class="modal-card">
-      <button class="modal-close" id="signInClose" aria-label="Close sign-in"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button>
-      <div class="modal-logo"><span class="brand-mark">M</span></div>
-      <h2 id="signInTitle">Welcome to MITTELY</h2>
-      <p class="modal-sub">Sign in with your Google account — it takes 5 seconds.</p>
-      <button class="btn btn-google btn-lg" id="googleSignInBtn"><i class="fa-brands fa-google" aria-hidden="true"></i> Continue with Google</button>
-      <ul class="trust-list">
-        <li><i class="fa-solid fa-bolt" aria-hidden="true"></i> Instant access to downloads</li>
-        <li><i class="fa-solid fa-shield-halved" aria-hidden="true"></i> Secure Google sign-in</li>
-        <li><i class="fa-solid fa-key" aria-hidden="true"></i> No password needed</li>
-      </ul>
-      <p class="modal-fineprint">By continuing you agree to our <a href="license.html">license terms</a>.</p>
-      <p class="form-error" id="signInError" role="alert" hidden></p>
-    </div>
+  <button class="back-to-top" id="backToTop" aria-label="Back to top"><i class="fa-solid fa-arrow-up"></i></button>
+  <div class="scroll-progress" id="scrollProgress"></div>
+
+  <div class="mobile-bottom-bar">
+    <a href="store.html" class="mbb-item"><i class="fa-solid fa-store"></i><span>Store</span></a>
+    <a href="cart.html" class="mbb-item"><i class="fa-solid fa-cart-shopping"></i><span>Cart</span><span class="cart-badge" id="cartBadgeMobile">0</span></a>
+    <a href="dashboard.html" class="mbb-item"><i class="fa-solid fa-heart"></i><span>Wishlist</span></a>
+    <a href="#" class="mbb-item" id="mbbAccount"><i class="fa-solid fa-user"></i><span>Account</span></a>
   </div>
 
-  <div class="search-overlay" id="searchOverlay" aria-hidden="true">
-    <div class="search-panel">
-      <div class="search-input-row">
-        <i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i>
-        <input type="search" id="searchInput" placeholder="Search products, blog posts…" autocomplete="off" aria-label="Search">
-        <button class="icon-btn" id="searchClose" aria-label="Close search"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button>
-      </div>
+  <div class="search-overlay" id="searchOverlay">
+    <div class="search-box">
+      <input type="text" id="searchInput" placeholder="Search products, blog..." aria-label="Search">
+      <button class="search-close" id="searchClose" aria-label="Close search"><i class="fa-solid fa-xmark"></i></button>
       <div class="search-results" id="searchResults"></div>
     </div>
   </div>
 
-  <div class="toast-container" id="toastContainer" aria-live="polite" aria-atomic="true"></div>
-  <button class="back-to-top" id="backToTop" aria-label="Back to top"><i class="fa-solid fa-arrow-up" aria-hidden="true"></i></button>
-  <div class="scroll-progress" id="scrollProgress"></div>
+  <div class="modal-overlay" id="signInModal" style="display:none;">
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="signInTitle">
+      <button class="modal-close" id="signInModalClose" aria-label="Close"><i class="fa-solid fa-xmark"></i></button>
+      <div class="modal-brand"><span class="brand-mark">M</span></div>
+      <h2 id="signInTitle">Welcome to MITTELY</h2>
+      <p class="modal-sub">Sign in with your Google account — it takes 5 seconds.</p>
+      <button class="btn btn-primary btn-google" id="googleSignInBtn">
+        <svg width="20" height="20" viewBox="0 0 48 48"><path fill="#FFC107" d="M43.6 20.1H42V20H24v8h11.3C33.7 32.7 29.3 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34.5 6.5 29.5 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.6-.4-3.9z"/><path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.7 15.1 19 12 24 12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34.5 6.5 29.5 4 24 4 16.3 4 9.7 8.3 6.3 14.7z"/><path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 35.1 26.7 36 24 36c-5.2 0-9.6-3.3-11.3-8l-6.5 5C9.5 39.6 16.2 44 24 44z"/><path fill="#1976D2" d="M43.6 20.1H42V20H24v8h11.3c-.8 2.2-2.2 4.1-4.1 5.5l6.2 5.2C36.9 39.2 44 34 44 24c0-1.3-.1-2.6-.4-3.9z"/></svg>
+        Continue with Google
+      </button>
+      <div class="modal-error" id="signInError" style="display:none;"></div>
+      <ul class="modal-trust">
+        <li><i class="fa-solid fa-download"></i> Instant access to downloads</li>
+        <li><i class="fa-solid fa-lock"></i> Secure Google sign-in</li>
+        <li><i class="fa-solid fa-key"></i> No password needed</li>
+      </ul>
+      <p class="modal-legal">By continuing you agree to our <a href="license.html">license terms</a>.</p>
+    </div>
+  </div>
 
-  <nav class="mobile-bottom-bar" aria-label="Quick navigation">
-    <a href="store.html"><i class="fa-solid fa-box" aria-hidden="true"></i><span>Store</span></a>
-    <a href="cart.html"><i class="fa-solid fa-cart-shopping" aria-hidden="true"></i><span>Cart</span></a>
-    <a href="#" id="mobileWishlist"><i class="fa-regular fa-heart" aria-hidden="true"></i><span>Wishlist</span></a>
-    <a href="dashboard.html"><i class="fa-solid fa-user" aria-hidden="true"></i><span>Account</span></a>
-  </nav>
+  <div class="toast-container" id="toastContainer"></div>
+
+  <script type="application/ld+json" id="blogJsonLd"></script>
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="config.js"></script>
@@ -261,5 +285,12 @@
   <script src="assets/js/auth.js"></script>
   <script src="assets/js/cart.js"></script>
   <script src="assets/js/blog.js"></script>
+  <script>
+    document.addEventListener('DOMContentLoaded', async function() {
+      if (window.MITTELY && window.MITTELY.blog) {
+        await window.MITTELY.blog.init();
+      }
+    });
+  </script>
 </body>
 </html>
