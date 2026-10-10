@@ -1,354 +1,283 @@
-/* MITTELY — dashboard.js
-   Renders the signed-in dashboard: profile, orders, reviews, wishlist, wallet,
-   activity timeline, payout requests. Login-gated via auth.js. */
+/* ============================================
+   MITTELY — dashboard.js
+   Profile card, My Orders (expandable + invoice
+   + downloads), My Reviews, My Wishlist.
+   ============================================ */
 (function () {
   'use strict';
 
-  function sb() { return window.mittely && window.mittely.sb && window.mittely.sb(); }
-  function qs(sel, root) { return (root || document).querySelector(sel); }
-  function qsa(sel, root) { return Array.prototype.slice.call((root || document).querySelectorAll(sel)); }
-  function esc(s) { return window.escapeHtml ? window.escapeHtml(s) : String(s == null ? '' : s); }
-  function money(usd) { return (window.mittelyCurrency && window.mittelyCurrency.format) ? window.mittelyCurrency.format(usd) : ('$' + Number(usd || 0).toFixed(2)); }
-  function toast(m, k) { if (window.toast) window.toast(m, k); }
-  function starsHtml(r) { var h='',n=Number(r)||0; for (var i=1;i<=5;i++){ if(n>=i)h+='<i class="fa-solid fa-star" aria-hidden="true"></i>'; else if(n>=i-0.5)h+='<i class="fa-solid fa-star-half-stroke" aria-hidden="true"></i>'; else h+='<i class="fa-regular fa-star" aria-hidden="true"></i>'; } return h; }
+  if (!window.MITTELY) window.MITTELY = {};
 
-  var state = { user: null, email: null, activeTab: 'orders' };
+  var esc = function (s) { return window.MITTELY.main ? window.MITTELY.main.escapeHtml(s) : String(s || ''); };
+  var money = function (n) { return window.MITTELY.currency ? window.MITTELY.currency.formatMoney(n) : ('$' + Number(n || 0).toFixed(2)); };
+  var toast = function (m, t) { if (window.MITTELY.main) window.MITTELY.main.toast(m, t); };
 
-  /* ================= Gate ================= */
+  var currentEmail = null;
 
-  function toggleGate(signedIn) {
-    var header = document.getElementById('dashboardHeader');
-    var gate = document.getElementById('dashboardGate');
-    var content = document.getElementById('dashboardContent');
-    if (header) header.hidden = !signedIn;
-    if (gate) gate.hidden = signedIn;
-    if (content) content.hidden = !signedIn;
+  /* ---------- Profile ---------- */
+
+  function renderProfile(session) {
+    if (!session || !session.user) return;
+    var meta = session.user.user_metadata || {};
+    var name = meta.full_name || meta.name || session.user.email;
+    var avatar = meta.avatar_url || meta.picture || '';
+
+    var nameEl = document.getElementById('profileName');
+    var emailEl = document.getElementById('profileEmail');
+    var avEl = document.getElementById('profileAvatar');
+    var sinceEl = document.getElementById('profileMemberSince');
+
+    if (nameEl) nameEl.textContent = name || '—';
+    if (emailEl) emailEl.textContent = session.user.email || '—';
+    if (sinceEl && session.user.created_at) {
+      sinceEl.textContent = 'Member since ' + new Date(session.user.created_at).toLocaleDateString('en-US', { year: 'numeric', month: 'long' });
+    }
+    if (avEl) {
+      avEl.innerHTML = avatar
+        ? '<img src="' + esc(avatar) + '" alt="" referrerpolicy="no-referrer">'
+        : '<span style="display:flex;align-items:center;justify-content:center;width:100%;height:100%;font-weight:800;font-size:1.75rem;color:var(--highlight);">' + esc((name || 'U').charAt(0).toUpperCase()) + '</span>';
+    }
   }
 
-  function hydrateProfile() {
-    var user = state.user;
-    if (!user) return;
-    var name = (user.user_metadata && (user.user_metadata.full_name || user.user_metadata.name)) || user.email;
-    var avatar = (user.user_metadata && user.user_metadata.avatar_url) || '';
-    var a = document.getElementById('profileAvatar');
-    var n = document.getElementById('profileName');
-    var e = document.getElementById('profileEmail');
-    if (a) a.src = avatar || 'https://ui-avatars.com/api/?name=' + encodeURIComponent(name) + '&background=C6F13C&color=1A1F1A';
-    if (n) n.textContent = name;
-    if (e) e.textContent = user.email;
+  /* ---------- Orders ---------- */
+
+  async function loadOrders() {
+    var list = document.getElementById('ordersList');
+    var emptyEl = document.getElementById('ordersEmpty');
+    if (!list || !window.MITTELY.supabase || !currentEmail) return;
+
+    list.innerHTML = '<div class="skeleton-card"></div><div class="skeleton-card"></div>';
+    if (emptyEl) emptyEl.style.display = 'none';
+
+    try {
+      var res = await window.MITTELY.supabase
+        .from('orders').select('*')
+        .eq('email', currentEmail)
+        .order('created_at', { ascending: false });
+      var orders = (res && res.data) || [];
+
+      if (!orders.length) {
+        list.innerHTML = '';
+        if (emptyEl) emptyEl.style.display = 'flex';
+        return;
+      }
+
+      var itemsRes = await window.MITTELY.supabase
+        .from('order_items').select('*, products(id, title, image_url, slug)')
+        .in('order_id', orders.map(function (o) { return o.id; }));
+      var itemsByOrder = {};
+      ((itemsRes && itemsRes.data) || []).forEach(function (it) {
+        if (!itemsByOrder[it.order_id]) itemsByOrder[it.order_id] = [];
+        itemsByOrder[it.order_id].push(it);
+      });
+
+      list.innerHTML = orders.map(function (o) {
+        var items = itemsByOrder[o.id] || [];
+        var itemsHtml = items.map(function (it) {
+          var p = it.products || {};
+          return '' +
+            '<div class="order-item-row">' +
+              '<img src="' + esc(p.image_url || '') + '" alt="">' +
+              '<div class="oi-info">' +
+                '<div class="oi-title">' + esc(p.title || 'Product') + '</div>' +
+                '<div class="oi-meta">' + esc((it.license || 'standard').toUpperCase()) + ' · ' + money(it.price_paid) + '</div>' +
+              '</div>' +
+              (o.status === 'success' ?
+                '<button class="btn btn-outline" data-download="' + esc(it.product_id) + '" data-ref="' + esc(o.paystack_reference) + '">' +
+                  '<i class="fa-solid fa-download"></i> Download' +
+                '</button>' : '') +
+            '</div>';
+        }).join('');
+
+        var date = o.created_at ? new Date(o.created_at).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' }) : '';
+        var statusClass = o.status === 'success' ? 'success' : (o.status === 'failed' ? 'failed' : 'pending');
+
+        return '' +
+          '<div class="order-card" data-order-id="' + esc(o.id) + '">' +
+            '<div class="order-card-header">' +
+              '<div>' +
+                '<div class="order-card-ref">' + esc(o.paystack_reference || '—') + '</div>' +
+                '<div class="order-card-meta">' +
+                  '<span>' + esc(date) + '</span>' +
+                  '<span>' + money(o.usd_amount) + '</span>' +
+                  '<span class="order-status-badge ' + statusClass + '">' + esc(o.status || 'pending') + '</span>' +
+                '</div>' +
+              '</div>' +
+              '<i class="fa-solid fa-chevron-down"></i>' +
+            '</div>' +
+            '<div class="order-card-body">' +
+              '<div class="order-items-list">' + itemsHtml + '</div>' +
+              '<div class="order-card-actions">' +
+                '<button class="btn btn-outline" data-print="' + esc(o.id) + '"><i class="fa-solid fa-print"></i> Print invoice</button>' +
+              '</div>' +
+            '</div>' +
+          '</div>';
+      }).join('');
+
+      list.querySelectorAll('.order-card-header').forEach(function (h) {
+        h.addEventListener('click', function () {
+          var card = h.closest('.order-card');
+          if (card) card.classList.toggle('open');
+        });
+      });
+
+      list.addEventListener('click', handleOrderAction);
+    } catch (e) {
+      list.innerHTML = '';
+      if (emptyEl) emptyEl.style.display = 'flex';
+    }
   }
 
-  /* ================= Tab switching ================= */
+  async function handleOrderAction(e) {
+    var dl = e.target.closest('[data-download]');
+    if (dl) {
+      e.stopPropagation();
+      var pid = dl.getAttribute('data-download');
+      var ref = dl.getAttribute('data-ref');
+      if (!pid) return;
+      if (window.MITTELY.main) window.MITTELY.main.setLoading(dl, true, '<i class="fa-solid fa-spinner fa-spin"></i>');
+      try {
+        var res = await window.MITTELY.supabase.functions.invoke('create-download-url', {
+          body: { product_id: pid, order_reference: ref }
+        });
+        if (res && res.error) throw res.error;
+        var data = res && res.data;
+        if (!data || !data.url) throw new Error('No URL');
+        window.open(data.url, '_blank', 'noopener');
+        toast('Download opened', 'success');
+      } catch (err) {
+        toast('Download failed', 'error');
+      } finally {
+        if (window.MITTELY.main) window.MITTELY.main.setLoading(dl, false);
+      }
+      return;
+    }
 
-  function setTab(name) {
-    state.activeTab = name;
-    qsa('.dash-tab').forEach(function (b) { b.classList.toggle('is-active', b.getAttribute('data-tab') === name); });
-    qsa('.dash-panel').forEach(function (p) { p.hidden = p.id !== ('panel-' + name); });
-    var hash = window.location.hash.replace('#', '');
-    if (hash !== name) window.history.replaceState({}, '', '# ' + name === '# ' + '' ? '' : '#' + name);
-    if (name === 'wallet') loadWallet();
-    if (name === 'activity') loadActivity();
-    if (name === 'orders') loadOrders();
-    if (name === 'reviews') loadReviews();
-    if (name === 'wishlist') loadWishlist();
+    var pr = e.target.closest('[data-print]');
+    if (pr) {
+      e.stopPropagation();
+      window.print();
+    }
   }
+
+  /* ---------- Reviews ---------- */
+
+  async function loadUserReviews() {
+    var list = document.getElementById('userReviewsList');
+    var emptyEl = document.getElementById('userReviewsEmpty');
+    if (!list || !window.MITTELY.supabase || !currentEmail) return;
+    list.innerHTML = '<div class="skeleton-card"></div>';
+    if (emptyEl) emptyEl.style.display = 'none';
+
+    try {
+      var res = await window.MITTELY.supabase
+        .from('reviews').select('*, products(title, image_url)')
+        .eq('email', currentEmail)
+        .order('created_at', { ascending: false });
+      var data = (res && res.data) || [];
+      if (!data.length) {
+        list.innerHTML = '';
+        if (emptyEl) emptyEl.style.display = 'flex';
+        return;
+      }
+      list.innerHTML = data.map(function (r) {
+        var stars = '';
+        for (var i = 0; i < 5; i++) stars += '<i class="fa-solid fa-star' + (i < (r.rating || 0) ? '' : ' style="opacity:0.3"') + '"></i>';
+        var statusLabels = { pending: 'Pending', approved: 'Approved', rejected: 'Rejected' };
+        var cls = r.status === 'approved' ? 'success' : (r.status === 'rejected' ? 'failed' : 'pending');
+        return '' +
+          '<div class="review-user-card">' +
+            '<div style="display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;">' +
+              '<div style="font-weight:700;">' + esc((r.products && r.products.title) || 'Product') + '</div>' +
+              '<span class="order-status-badge ' + cls + '">' + esc(statusLabels[r.status] || r.status) + '</span>' +
+            '</div>' +
+            '<div class="review-stars">' + stars + '</div>' +
+            '<div class="review-body">' + esc(r.comment || '') + '</div>' +
+            '<div class="review-date">' + (r.created_at ? new Date(r.created_at).toLocaleDateString() : '') + '</div>' +
+          '</div>';
+      }).join('');
+    } catch (e) {
+      list.innerHTML = '';
+      if (emptyEl) emptyEl.style.display = 'flex';
+    }
+  }
+
+  /* ---------- Wishlist ---------- */
+
+  async function loadWishlist() {
+    var grid = document.getElementById('wishlistGrid');
+    var emptyEl = document.getElementById('wishlistEmpty');
+    if (!grid || !window.MITTELY.supabase || !currentEmail) return;
+    grid.innerHTML = '<div class="skeleton-card"></div>';
+    if (emptyEl) emptyEl.style.display = 'none';
+
+    try {
+      var res = await window.MITTELY.supabase
+        .from('wishlist').select('product_id, products(*)')
+        .eq('email', currentEmail);
+      var rows = (res && res.data) || [];
+      var products = rows.map(function (r) { return r.products; }).filter(Boolean);
+      if (!products.length) {
+        grid.innerHTML = '';
+        if (emptyEl) emptyEl.style.display = 'flex';
+        return;
+      }
+      grid.innerHTML = products.map(function (p) {
+        return window.MITTELY.products.productCardHtml(p);
+      }).join('');
+      if (window.MITTELY.products && typeof window.MITTELY.products.loadWishlistFlags === 'function') {
+        window.MITTELY.products.loadWishlistFlags(grid);
+      }
+    } catch (e) {
+      grid.innerHTML = '';
+      if (emptyEl) emptyEl.style.display = 'flex';
+    }
+  }
+
+  /* ---------- Tabs ---------- */
 
   function bindTabs() {
-    qsa('.dash-tab').forEach(function (b) {
-      b.addEventListener('click', function () { setTab(b.getAttribute('data-tab')); });
+    var nav = document.querySelector('.dashboard-tabs .tab-nav');
+    if (!nav || nav.dataset.bound === '1') return;
+    nav.dataset.bound = '1';
+    nav.addEventListener('click', function (e) {
+      var btn = e.target.closest('.tab-btn');
+      if (!btn) return;
+      var tab = btn.getAttribute('data-tab');
+      nav.querySelectorAll('.tab-btn').forEach(function (b) { b.classList.toggle('active', b === btn); });
+      document.querySelectorAll('.dashboard-tabs .tab-panel').forEach(function (p) {
+        p.classList.toggle('active', p.id === 'tab-' + tab);
+      });
     });
-    var hash = window.location.hash.replace('#', '');
-    if (hash && ['orders','reviews','wishlist','wallet','activity'].indexOf(hash) !== -1) setTab(hash);
-    else setTab('orders');
   }
 
-  /* ================= Orders ================= */
+  /* ---------- Init ---------- */
 
-  function loadOrders() {
-    var list = document.getElementById('ordersList');
-    var empty = document.getElementById('ordersEmpty');
-    if (!list) return;
-    list.innerHTML = '<div class="skeleton-line"></div><div class="skeleton-line"></div>';
-    var client = sb();
-    if (!client || !state.email) return;
-    client.from('orders')
-      .select('id,paystack_reference,amount,currency,usd_amount,status,created_at,order_items(id,price_paid,license,products(id,title,slug,image_url))')
-      .eq('email', state.email)
-      .order('created_at', { ascending: false })
-      .then(function (res) {
-        var rows = (res && res.data) || [];
-        if (!rows.length) { list.innerHTML = ''; if (empty) empty.hidden = false; return; }
-        if (empty) empty.hidden = true;
-        list.innerHTML = rows.map(function (o) {
-          var items = o.order_items || [];
-          return '' +
-            '<article class="order-row" data-order-id="' + esc(o.id) + '">' +
-              '<header class="order-row-head">' +
-                '<div>' +
-                  '<div class="order-row-ref">' + esc(o.paystack_reference) + '</div>' +
-                  '<div class="order-row-date">' + new Date(o.created_at).toLocaleString() + '</div>' +
-                '</div>' +
-                '<div class="order-row-total">' + money(o.usd_amount) + '</div>' +
-                '<span class="status-badge status-' + esc(o.status) + '">' + esc(o.status) + '</span>' +
-              '</header>' +
-              '<div class="order-row-items">' +
-                items.map(function (it) {
-                  var p = it.products || {};
-                  return '' +
-                    '<div class="order-item-row">' +
-                      '<img src="' + esc(p.image_url || 'https://images.unsplash.com/photo-1559028012-481c04fa702d?w=200&q=60') + '" alt="">' +
-                      '<div><strong>' + esc(p.title || '—') + '</strong><br><span class="muted" style="font-size:.85em">' + esc(it.license) + '</span></div>' +
-                      '<div style="display:flex;gap:6px">' +
-                        '<button class="btn btn-outline btn-sm" type="button" data-download="' + esc(p.id || '') + '" data-ref="' + esc(o.paystack_reference) + '"><i class="fa-solid fa-download" aria-hidden="true"></i> Download</button>' +
-                        '<button class="btn btn-ghost btn-sm" type="button" data-print="1"><i class="fa-solid fa-print" aria-hidden="true"></i></button>' +
-                      '</div>' +
-                    '</div>';
-                }).join('') +
-              '</div>' +
-            '</article>';
-        }).join('');
+  async function init() {
+    var gate = document.getElementById('dashboardAuthGate');
+    var content = document.getElementById('dashboardContent');
+    var signInBtn = document.getElementById('dashboardSignInBtn');
+    if (signInBtn) signInBtn.addEventListener('click', function () { window.MITTELY.auth.openSignInModal(); });
 
-        qsa('[data-download]', list).forEach(function (b) {
-          b.addEventListener('click', function () {
-            b.classList.add('is-loading');
-            client.functions.invoke('create-download-url', { body: { product_id: b.getAttribute('data-download'), order_reference: b.getAttribute('data-ref') } })
-              .then(function (r) {
-                b.classList.remove('is-loading');
-                var url = r && r.data && r.data.url;
-                if (!url) { toast('Could not create download.', 'error'); return; }
-                window.location.href = url;
-              }).catch(function () { b.classList.remove('is-loading'); toast('Could not create download.', 'error'); });
-          });
-        });
-        qsa('[data-print]', list).forEach(function (b) {
-          b.addEventListener('click', function () { window.print(); });
-        });
-      });
-  }
-
-  /* ================= Reviews ================= */
-
-  function loadReviews() {
-    var list = document.getElementById('reviewsList');
-    var empty = document.getElementById('reviewsDashEmpty');
-    if (!list) return;
-    list.innerHTML = '<div class="skeleton-line"></div>';
-    var client = sb();
-    if (!client || !state.email) return;
-    client.from('reviews')
-      .select('id,rating,comment,status,created_at,products(title,slug)')
-      .eq('email', state.email)
-      .order('created_at', { ascending: false })
-      .then(function (res) {
-        var rows = (res && res.data) || [];
-        if (!rows.length) { list.innerHTML = ''; if (empty) empty.hidden = false; return; }
-        if (empty) empty.hidden = true;
-        list.innerHTML = rows.map(function (r) {
-          var p = r.products || {};
-          return '' +
-            '<article class="review-card">' +
-              '<div class="review-card-head">' +
-                '<div><div class="review-name">' + esc(p.title || 'Product') + '</div>' +
-                '<div class="review-date">' + new Date(r.created_at).toLocaleDateString() + '</div></div>' +
-                '<span class="status-badge status-' + esc(r.status) + '" style="margin-left:auto">' + esc(r.status) + '</span>' +
-              '</div>' +
-              '<div class="review-stars">' + starsHtml(r.rating) + '</div>' +
-              '<p class="review-comment">' + esc(r.comment || '') + '</p>' +
-            '</article>';
-        }).join('');
-        if (window.mittelyMain && window.mittelyMain.initReviewClamps) window.mittelyMain.initReviewClamps(list);
-      });
-  }
-
-  /* ================= Wishlist ================= */
-
-  function loadWishlist() {
-    var grid = document.getElementById('wishlistGrid');
-    var empty = document.getElementById('wishlistEmpty');
-    if (!grid) return;
-    var client = sb();
-    if (!client || !state.email) return;
-    client.from('wishlist')
-      .select('product_id,products(id,title,slug,category,price,sale_price,rating,reviews_count,image_url,is_free,is_hot_sale,is_black_friday,is_featured,badge,is_published)')
-      .eq('email', state.email)
-      .then(function (res) {
-        var rows = (res && res.data) || [];
-        var products = rows.map(function (r) { return r.products; }).filter(function (p) { return p && p.is_published; });
-        if (!products.length) { grid.innerHTML = ''; if (empty) empty.hidden = false; return; }
-        if (empty) empty.hidden = true;
-        if (window.mittelyProducts && window.mittelyProducts.renderGrid) {
-          window.mittelyProducts.renderGrid(grid, products, empty);
-        }
-      });
-  }
-
-  /* ================= Wallet ================= */
-
-  function loadWallet() {
-    var client = sb();
-    if (!client || !state.email) return;
-
-    client.from('wallets').select('balance,updated_at').eq('email', state.email).maybeSingle()
-      .then(function (res) {
-        var bal = res && res.data ? Number(res.data.balance || 0) : 0;
-        var balEl = document.getElementById('walletBalance');
-        var ghsEl = document.getElementById('walletBalanceGhs');
-        if (balEl) balEl.textContent = money(bal);
-        if (ghsEl) {
-          var rate = window.mittelyCurrency && window.mittelyCurrency.currentRate ? window.mittelyCurrency.currentRate() : 15.5;
-          var fmt = new Intl.NumberFormat('en-GH', { style: 'currency', currency: 'GHS' });
-          ghsEl.textContent = fmt.format(bal * rate);
-        }
-      });
-
-    client.from('wallet_transactions')
-      .select('type,amount,balance_after,note,created_at')
-      .eq('email', state.email)
-      .order('created_at', { ascending: false })
-      .then(function (res) {
-        var rows = (res && res.data) || [];
-        var lifetime = 0, pending = 0;
-        rows.forEach(function (r) {
-          if (r.type === 'earning') lifetime += Number(r.amount);
-          if (r.type === 'payout') pending += Number(r.amount);
-        });
-        var earnEl = document.getElementById('walletEarnings');
-        var pendEl = document.getElementById('walletPending');
-        if (earnEl) earnEl.textContent = money(lifetime);
-        if (pendEl) pendEl.textContent = money(pending);
-
-        var body = document.getElementById('walletTransactionsBody');
-        if (!body) return;
-        if (!rows.length) { body.innerHTML = '<tr><td colspan="5" class="cell-empty">No transactions yet.</td></tr>'; return; }
-        body.innerHTML = rows.map(function (r) {
-          return '<tr>' +
-            '<td>' + new Date(r.created_at).toLocaleDateString() + '</td>' +
-            '<td>' + esc(r.type) + '</td>' +
-            '<td>' + money(r.amount) + '</td>' +
-            '<td>' + money(r.balance_after) + '</td>' +
-            '<td>' + esc(r.note || '') + '</td>' +
-          '</tr>';
-        }).join('');
-      });
-
-    client.from('payout_requests')
-      .select('amount,status,note,created_at,handled_at')
-      .eq('email', state.email)
-      .order('created_at', { ascending: false })
-      .then(function (res) {
-        var rows = (res && res.data) || [];
-        var body = document.getElementById('payoutHistoryBody');
-        if (!body) return;
-        if (!rows.length) { body.innerHTML = '<tr><td colspan="4" class="cell-empty">No payout requests yet.</td></tr>'; return; }
-        body.innerHTML = rows.map(function (r) {
-          return '<tr>' +
-            '<td>' + new Date(r.created_at).toLocaleDateString() + '</td>' +
-            '<td>' + money(r.amount) + '</td>' +
-            '<td><span class="status-badge status-' + esc(r.status) + '">' + esc(r.status) + '</span></td>' +
-            '<td>' + esc(r.note || '') + '</td>' +
-          '</tr>';
-        }).join('');
-      });
-
-    // Payout form
-    var form = document.getElementById('payoutForm');
-    if (form && form.dataset.bound !== '1') {
-      form.dataset.bound = '1';
-      form.addEventListener('submit', function (e) {
-        e.preventDefault();
-        var amtEl = document.getElementById('payoutAmount');
-        var err = document.getElementById('payoutError');
-        var ok = document.getElementById('payoutSuccess');
-        var btn = document.getElementById('payoutSubmitBtn');
-        if (err) err.hidden = true;
-        if (ok) ok.hidden = true;
-        var amt = parseFloat(amtEl.value);
-        var MIN = (window.MITTELY_CONFIG && window.MITTELY_CONFIG.MIN_PAYOUT) || 20;
-        if (!isFinite(amt) || amt < MIN) { if (err) { err.textContent = 'Minimum payout is $' + MIN.toFixed(2) + '.'; err.hidden = false; } return; }
-        btn.classList.add('is-loading');
-        client.rpc('request_payout', { p_amount: amt }).then(function (res) {
-          btn.classList.remove('is-loading');
-          var data = res && res.data;
-          if (res.error || !data || !data.ok) {
-            if (err) { err.textContent = (res.error && res.error.message) || (data && data.reason) || 'Request failed.'; err.hidden = false; }
-            return;
-          }
-          if (ok) ok.hidden = false;
-          amtEl.value = '';
-          loadWallet();
-        }).catch(function (e2) {
-          btn.classList.remove('is-loading');
-          if (err) { err.textContent = e2.message || 'Request failed.'; err.hidden = false; }
-        });
-      });
-    }
-  }
-
-  /* ================= Activity ================= */
-
-  var ACTIVITY_ICON = {
-    signup: 'fa-solid fa-user-plus',
-    sign_in: 'fa-solid fa-right-to-bracket',
-    order: 'fa-solid fa-receipt',
-    download: 'fa-solid fa-download',
-    review: 'fa-solid fa-comment-dots',
-    wishlist: 'fa-regular fa-heart',
-    payout_request: 'fa-solid fa-money-bill-transfer',
-    payout_paid: 'fa-solid fa-check'
-  };
-
-  function loadActivity() {
-    var list = document.getElementById('activityTimeline');
-    var empty = document.getElementById('activityEmpty');
-    if (!list) return;
-    var client = sb();
-    if (!client || !state.email) return;
-    list.innerHTML = '<li class="skeleton-line"></li>';
-    client.from('activity_log')
-      .select('event,meta,created_at')
-      .eq('email', state.email)
-      .order('created_at', { ascending: false })
-      .limit(30)
-      .then(function (res) {
-        var rows = (res && res.data) || [];
-        if (!rows.length) { list.innerHTML = ''; if (empty) empty.hidden = false; return; }
-        if (empty) empty.hidden = true;
-        list.innerHTML = rows.map(function (r) {
-          var icon = ACTIVITY_ICON[r.event] || 'fa-solid fa-circle-info';
-          var when = new Date(r.created_at).toLocaleString();
-          return '<li class="activity-item">' +
-            '<i class="' + icon + '" aria-hidden="true"></i>' +
-            '<div><div>' + esc(r.event.replace(/_/g, ' ')) + '</div>' +
-            '<div class="activity-meta">' + esc(when) + '</div></div>' +
-          '</li>';
-        }).join('');
-      });
-  }
-
-  /* ================= Auth subscription ================= */
-
-  function onAuthReady() {
-    var user = window.mittelyAuth && window.mittelyAuth.getUser && window.mittelyAuth.getUser();
-    state.user = user;
-    state.email = user && user.email ? String(user.email).toLowerCase() : null;
-    toggleGate(!!user);
-    if (!user) return;
-    hydrateProfile();
     bindTabs();
-  }
 
-  function onReady(fn) {
-    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', fn);
-    else fn();
-  }
-
-  onReady(function () {
-    // Wait a tick for auth.js to resolve the session.
-    setTimeout(onAuthReady, 300);
-    window.addEventListener('mittely:auth-changed', onAuthReady);
-    var client = sb();
-    if (client) {
-      client.auth.onAuthStateChange(function () { setTimeout(onAuthReady, 100); });
+    async function refresh() {
+      var session = await window.MITTELY.auth.getSession();
+      if (!session || !session.user) {
+        if (gate) gate.style.display = 'block';
+        if (content) content.style.display = 'none';
+        return;
+      }
+      if (gate) gate.style.display = 'none';
+      if (content) content.style.display = 'block';
+      currentEmail = session.user.email;
+      renderProfile(session);
+      await Promise.all([loadOrders(), loadUserReviews(), loadWishlist()]);
     }
-  });
+
+    document.addEventListener('mittely:auth-changed', refresh);
+    await refresh();
+  }
+
+  window.MITTELY.dashboard = { init: init };
 })();

@@ -1,278 +1,342 @@
-/* MITTELY — cart.js
-   localStorage cart with DB price refresh, cross-tab badge sync, coupon
-   state in sessionStorage, and shared helpers used by cart.html / checkout.html /
-   product.html. Prices stored in USD; conversion is display-only. */
+/* ============================================
+   MITTELY — cart.js
+   localStorage cart, badge sync, live price
+   refresh from DB, coupon state, totals.
+   ============================================ */
 (function () {
   'use strict';
 
-  var CART_KEY = 'mittely_cart';
+  if (!window.MITTELY) window.MITTELY = {};
+
+  var STORAGE_KEY = 'mittely_cart';
   var COUPON_KEY = 'mittely_coupon';
-  var MIN_QTY = 1, MAX_QTY = 99;
 
-  function sb() { return window.mittely && window.mittely.sb && window.mittely.sb(); }
-  function qs(sel, root) { return (root || document).querySelector(sel); }
-  function qsa(sel, root) { return Array.prototype.slice.call((root || document).querySelectorAll(sel)); }
-  function money(usd) { return (window.mittelyCurrency && window.mittelyCurrency.format) ? window.mittelyCurrency.format(usd) : ('$' + Number(usd || 0).toFixed(2)); }
-
-  /* ============ Storage ============ */
+  /* ---------- Cart data ---------- */
 
   function readCart() {
     try {
-      var raw = localStorage.getItem(CART_KEY);
-      var arr = raw ? JSON.parse(raw) : [];
-      if (!Array.isArray(arr)) return [];
-      // Sanitize each entry.
-      return arr.filter(function (it) {
-        return it && it.slug && it.title && isFinite(Number(it.price));
-      }).map(function (it) {
-        return {
-          slug: String(it.slug),
-          title: String(it.title),
-          image_url: it.image_url ? String(it.image_url) : '',
-          price: Number(it.price),
-          license: it.license === 'extended' ? 'extended' : 'standard',
-          qty: Math.max(MIN_QTY, Math.min(MAX_QTY, parseInt(it.qty, 10) || 1)),
-          product_id: it.product_id || null
-        };
-      });
+      var raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw) return [];
+      var parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed : [];
     } catch (e) { return []; }
   }
 
   function writeCart(items) {
-    try { localStorage.setItem(CART_KEY, JSON.stringify(items)); } catch (e) {}
-    updateBadge();
-    document.dispatchEvent(new CustomEvent('mittely:cart-updated', { detail: { count: countItems(items) } }));
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(items || []));
+    } catch (e) {}
+    syncBadge();
+    document.dispatchEvent(new CustomEvent('mittely:cart-changed', { detail: { items: items || [] } }));
   }
+
+  function addItem(item) {
+    if (!item || !item.product_id) return false;
+    var items = readCart();
+    var license = item.license || 'standard';
+    var existing = items.find(function (i) {
+      return i.product_id === item.product_id && i.license === license;
+    });
+    if (existing) {
+      existing.qty = (existing.qty || 1) + (item.qty || 1);
+    } else {
+      items.push({
+        product_id: item.product_id,
+        title: item.title || '',
+        image_url: item.image_url || '',
+        price: Number(item.price) || 0,
+        license: license,
+        qty: item.qty || 1
+      });
+    }
+    writeCart(items);
+    return true;
+  }
+
+  function removeItem(product_id, license) {
+    var items = readCart().filter(function (i) {
+      return !(i.product_id === product_id && i.license === (license || 'standard'));
+    });
+    writeCart(items);
+  }
+
+  function setQty(product_id, license, qty) {
+    var items = readCart();
+    var item = items.find(function (i) {
+      return i.product_id === product_id && i.license === (license || 'standard');
+    });
+    if (!item) return;
+    item.qty = Math.max(1, parseInt(qty, 10) || 1);
+    writeCart(items);
+  }
+
+  function clearCart() {
+    writeCart([]);
+    clearCoupon();
+  }
+
+  function cartCount() {
+    return readCart().reduce(function (sum, i) { return sum + (i.qty || 1); }, 0);
+  }
+
+  function syncBadge() {
+    var count = cartCount();
+    document.querySelectorAll('.cart-badge').forEach(function (el) {
+      el.textContent = String(count);
+      el.style.display = count > 0 ? 'inline-flex' : 'none';
+    });
+  }
+
+  /* ---------- Coupon ---------- */
 
   function readCoupon() {
     try {
       var raw = sessionStorage.getItem(COUPON_KEY);
-      return raw ? JSON.parse(raw) : null;
+      if (!raw) return null;
+      return JSON.parse(raw);
     } catch (e) { return null; }
   }
 
   function writeCoupon(c) {
     try {
-      if (!c) sessionStorage.removeItem(COUPON_KEY);
-      else sessionStorage.setItem(COUPON_KEY, JSON.stringify(c));
+      if (c) sessionStorage.setItem(COUPON_KEY, JSON.stringify(c));
+      else sessionStorage.removeItem(COUPON_KEY);
     } catch (e) {}
-    document.dispatchEvent(new CustomEvent('mittely:coupon-updated', { detail: { coupon: c || null } }));
   }
 
-  /* ============ Math ============ */
-
-  // License multiplier mirrors the licenses table: Standard=1.0, Extended=3.0.
-  var LICENSE_MULTIPLIER = { standard: 1.0, extended: 3.0 };
-
-  function priceWithLicense(item) {
-    var mult = LICENSE_MULTIPLIER[item.license] || 1;
-    return Number(item.price) * mult;
+  function applyCouponLocal(code, usdSubtotal) {
+    if (!code) return null;
+    return { code: String(code).toUpperCase().trim(), usdSubtotal: Number(usdSubtotal) || 0 };
   }
 
-  function subtotalUsd(items) {
-    return (items || readCart()).reduce(function (sum, it) {
-      return sum + priceWithLicense(it) * it.qty;
-    }, 0);
-  }
-
-  function countItems(items) {
-    return (items || readCart()).reduce(function (n, it) { return n + it.qty; }, 0);
-  }
-
-  function computeTotals() {
-    var items = readCart();
-    var subtotal = subtotalUsd(items);
-    var coupon = readCoupon();
-    var discount = 0;
-    if (coupon) {
-      if (coupon.type === 'percent') {
-        discount = subtotal * (Number(coupon.value) / 100);
-      } else if (coupon.type === 'fixed') {
-        discount = Math.min(subtotal, Number(coupon.value));
-      }
-    }
-    discount = Math.max(0, Math.min(subtotal, discount));
-    var total = Math.max(0, subtotal - discount);
-    return { items: items, subtotal: subtotal, discount: discount, total: total, coupon: coupon };
-  }
-
-  /* ============ Mutations ============ */
-
-  function addItem(product, license) {
-    var items = readCart();
-    var lic = license === 'extended' ? 'extended' : 'standard';
-    var idx = items.findIndex(function (it) { return it.slug === product.slug && it.license === lic; });
-    if (idx !== -1) {
-      items[idx].qty = Math.min(MAX_QTY, items[idx].qty + 1);
-    } else {
-      items.push({
-        slug: product.slug,
-        title: product.title,
-        image_url: product.image_url || '',
-        price: Number(product.price),
-        license: lic,
-        qty: 1,
-        product_id: product.id || null
-      });
-    }
-    writeCart(items);
-    return items;
-  }
-
-  function updateQty(slug, license, qty) {
-    var items = readCart();
-    var idx = items.findIndex(function (it) { return it.slug === slug && it.license === license; });
-    if (idx === -1) return items;
-    var n = Math.max(MIN_QTY, Math.min(MAX_QTY, parseInt(qty, 10) || 1));
-    items[idx].qty = n;
-    writeCart(items);
-    return items;
-  }
-
-  function removeItem(slug, license) {
-    var items = readCart().filter(function (it) {
-      return !(it.slug === slug && it.license === license);
-    });
-    writeCart(items);
-    return items;
-  }
-
-  function clear() {
-    try { localStorage.removeItem(CART_KEY); } catch (e) {}
-    updateBadge();
-    document.dispatchEvent(new CustomEvent('mittely:cart-updated', { detail: { count: 0 } }));
-  }
-
-  /* ============ DB price refresh ============ */
-
-  function refreshPrices() {
-    var client = sb();
-    var items = readCart();
-    if (!client || !items.length) return Promise.resolve(items);
-
-    var slugs = items.map(function (it) { return it.slug; });
-    return client.from('products')
-      .select('id,slug,title,image_url,price,sale_price,is_free,is_published')
-      .in('slug', slugs)
-      .then(function (res) {
-        if (res.error || !res.data) return items;
-        var bySlug = {};
-        res.data.forEach(function (p) { bySlug[p.slug] = p; });
-        var changed = false;
-        var next = items.filter(function (it) {
-          var p = bySlug[it.slug];
-          // Remove items no longer available.
-          if (!p || p.is_published === false) { changed = true; return false; }
-          var base = (p.sale_price != null && Number(p.sale_price) > 0) ? Number(p.sale_price) : Number(p.price);
-          if (p.is_free) base = 0;
-          if (Number(it.price) !== base) { it.price = base; changed = true; }
-          if (p.title && it.title !== p.title) { it.title = p.title; changed = true; }
-          if (p.image_url && it.image_url !== p.image_url) { it.image_url = p.image_url; changed = true; }
-          it.product_id = p.id;
-          return true;
-        });
-        if (changed) writeCart(next);
-        return next;
-      })
-      .catch(function () { return items; });
-  }
-
-  /* ============ Badge ============ */
-
-  function updateBadge() {
-    var badge = document.getElementById('cartBadge');
-    if (!badge) return;
-    var n = countItems();
-    if (n > 0) { badge.hidden = false; badge.textContent = String(n); }
-    else { badge.hidden = true; badge.textContent = '0'; }
-  }
-
-  /* ============ Coupon flow (client-side format validation only; verify server-side) ============ */
-
-  function couponFormatCheck(code) {
-    if (!code) return { ok: false, reason: 'Enter a code.' };
-    var c = String(code).trim().toUpperCase();
-    if (!/^[A-Z0-9_-]{3,32}$/.test(c)) return { ok: false, reason: 'Code format looks invalid.' };
-    return { ok: true, code: c };
-  }
-
-  function applyCoupon(code) {
-    var client = sb();
-    if (!client) return Promise.resolve({ ok: false, reason: 'Network unavailable.' });
-    var check = couponFormatCheck(code);
-    if (!check.ok) return Promise.resolve(check);
-
-    // Client-side preview only; verify-payment re-validates server-side.
-    return client.from('coupons')
-      .select('code,type,value,min_subtotal,max_uses,used_count,expires_at,is_active')
-      .eq('code', check.code)
-      .maybeSingle()
-      .then(function (res) {
-        if (res.error || !res.data) return { ok: false, reason: 'Invalid or unknown code.' };
-        var c = res.data;
-        if (!c.is_active) return { ok: false, reason: 'This code is no longer active.' };
-        if (c.expires_at && new Date(c.expires_at) < new Date()) return { ok: false, reason: 'This code has expired.' };
-        if (c.max_uses != null && Number(c.used_count) >= Number(c.max_uses)) return { ok: false, reason: 'This code has reached its usage limit.' };
-
-        var subtotal = subtotalUsd();
-        if (subtotal < Number(c.min_subtotal || 0)) {
-          return { ok: false, reason: 'Add ' + money(Number(c.min_subtotal) - subtotal) + ' more to use this code.' };
-        }
-
-        var applied = {
-          code: c.code,
-          type: c.type,
-          value: Number(c.value)
-        };
-        writeCoupon(applied);
-        return { ok: true, coupon: applied };
-      })
-      .catch(function () { return { ok: false, reason: 'Could not validate code. Try again.' }; });
-  }
-
-  function removeCoupon() {
+  function clearCoupon() {
     writeCoupon(null);
   }
 
-  /* ============ Cross-tab sync ============ */
+  /* ---------- Totals ---------- */
 
-  window.addEventListener('storage', function (e) {
-    if (e.key === CART_KEY) {
-      updateBadge();
-      document.dispatchEvent(new CustomEvent('mittely:cart-updated', { detail: { count: countItems() } }));
-    }
-    if (e.key === COUPON_KEY) {
-      document.dispatchEvent(new CustomEvent('mittely:coupon-updated', { detail: { coupon: readCoupon() } }));
-    }
-  });
-
-  /* ============ Ready ============ */
-
-  function onReady(fn) {
-    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', fn);
-    else fn();
+  function subtotalUSD() {
+    return readCart().reduce(function (sum, i) {
+      return sum + (Number(i.price) || 0) * (i.qty || 1);
+    }, 0);
   }
 
-  onReady(function () {
-    updateBadge();
-    refreshPrices().then(updateBadge);
-  });
+  function discountUSD(coupon) {
+    if (!coupon) return 0;
+    var sub = subtotalUSD();
+    if (coupon.type === 'percent') {
+      return +(sub * (Number(coupon.value) || 0) / 100).toFixed(2);
+    }
+    if (coupon.type === 'fixed') {
+      return Math.min(sub, Number(coupon.value) || 0);
+    }
+    return 0;
+  }
 
-  window.mittelyCart = {
-    read: readCart,
-    write: writeCart,
-    add: addItem,
-    updateQty: updateQty,
-    remove: removeItem,
-    clear: clear,
-    count: countItems,
-    subtotal: subtotalUsd,
-    totals: computeTotals,
-    refreshPrices: refreshPrices,
-    getCoupon: readCoupon,
-    applyCoupon: applyCoupon,
-    removeCoupon: removeCoupon,
-    priceWithLicense: priceWithLicense,
-    LICENSE_MULTIPLIER: LICENSE_MULTIPLIER
+  function totalUSD(coupon) {
+    var sub = subtotalUSD();
+    var disc = discountUSD(coupon);
+    return Math.max(0, +(sub - disc).toFixed(2));
+  }
+
+  /* ---------- Refresh from DB ---------- */
+
+  async function refreshFromDb() {
+    var items = readCart();
+    if (!items.length || !window.MITTELY.supabase) return items;
+    try {
+      var ids = items.map(function (i) { return i.product_id; });
+      var res = await window.MITTELY.supabase
+        .from('products')
+        .select('id, title, price, sale_price, image_url, slug, is_published')
+        .in('id', ids);
+      var byId = {};
+      ((res && res.data) || []).forEach(function (p) { byId[p.id] = p; });
+      items = items.map(function (i) {
+        var p = byId[i.product_id];
+        if (!p) return i;
+        var price = (p.sale_price != null && p.sale_price !== '') ? Number(p.sale_price) : Number(p.price);
+        return Object.assign({}, i, {
+          title: p.title || i.title,
+          image_url: p.image_url || i.image_url,
+          price: isFinite(price) ? price : i.price,
+          slug: p.slug || i.slug
+        });
+      });
+      writeCart(items);
+    } catch (e) { /* keep local */ }
+    return items;
+  }
+
+  /* ---------- Cart page renderer ---------- */
+
+  async function initCartPage() {
+    var itemsWrap = document.getElementById('cartItems');
+    var emptyEl = document.getElementById('cartEmpty');
+    var couponInput = document.getElementById('couponInput');
+    var couponApplyBtn = document.getElementById('applyCouponBtn');
+    var couponApplied = document.getElementById('couponApplied');
+    var couponAppliedCode = document.getElementById('couponAppliedCode');
+    var couponRemoveBtn = document.getElementById('removeCouponBtn');
+    var couponError = document.getElementById('couponError');
+    var summarySubtotal = document.getElementById('summarySubtotal');
+    var summaryTotal = document.getElementById('summaryTotal');
+    var summaryDiscountRow = document.getElementById('summaryDiscountRow');
+    var summaryDiscount = document.getElementById('summaryDiscount');
+    var checkoutBtn = document.getElementById('checkoutBtn');
+
+    if (!itemsWrap) return;
+
+    var items = await refreshFromDb();
+    var coupon = readCoupon();
+
+    function render() {
+      items = readCart();
+      if (!items.length) {
+        itemsWrap.innerHTML = '';
+        if (emptyEl) emptyEl.style.display = 'flex';
+        if (couponApplied) couponApplied.style.display = 'none';
+      } else {
+        if (emptyEl) emptyEl.style.display = 'none';
+        itemsWrap.innerHTML = items.map(function (i) {
+          var esc = window.MITTELY.main.escapeHtml;
+          var lineTotal = (Number(i.price) || 0) * (i.qty || 1);
+          return '' +
+            '<div class="cart-item" data-pid="' + esc(i.product_id) + '" data-license="' + esc(i.license) + '">' +
+              '<div class="cart-item-img"><img src="' + esc(i.image_url) + '" alt="' + esc(i.title) + '" loading="lazy"></div>' +
+              '<div class="cart-item-info">' +
+                '<div class="cart-item-title">' + esc(i.title) + '</div>' +
+                '<div class="cart-item-meta">License: ' + esc((i.license || 'standard').toUpperCase()) + ' · Qty ' + (i.qty || 1) + '</div>' +
+                '<div class="cart-item-price" data-price-usd="' + lineTotal.toFixed(2) + '">' + window.MITTELY.currency.formatMoney(lineTotal) + '</div>' +
+              '</div>' +
+              '<button class="cart-item-remove" aria-label="Remove item" data-action="remove"><i class="fa-solid fa-trash"></i></button>' +
+            '</div>';
+        }).join('');
+      }
+      renderSummary();
+      renderCoupon();
+    }
+
+    function renderCoupon() {
+      if (coupon && coupon.code) {
+        if (couponApplied) couponApplied.style.display = 'flex';
+        if (couponAppliedCode) couponAppliedCode.textContent = coupon.code;
+      } else {
+        if (couponApplied) couponApplied.style.display = 'none';
+      }
+    }
+
+    function renderSummary() {
+      var sub = subtotalUSD();
+      var disc = discountUSD(coupon);
+      var tot = Math.max(0, sub - disc);
+      if (summarySubtotal) summarySubtotal.textContent = window.MITTELY.currency.formatMoney(sub);
+      if (summaryTotal) summaryTotal.textContent = window.MITTELY.currency.formatMoney(tot);
+      if (summaryDiscountRow) summaryDiscountRow.style.display = disc > 0 ? 'flex' : 'none';
+      if (summaryDiscount) summaryDiscount.textContent = '-' + window.MITTELY.currency.formatMoney(disc);
+    }
+
+    itemsWrap.addEventListener('click', function (e) {
+      var btn = e.target.closest('[data-action="remove"]');
+      if (!btn) return;
+      var row = btn.closest('.cart-item');
+      if (!row) return;
+      var pid = row.getAttribute('data-pid');
+      var lic = row.getAttribute('data-license');
+      removeItem(pid, lic);
+      if (window.MITTELY.main) window.MITTELY.main.toast('Item removed', 'info');
+      render();
+    });
+
+    if (couponApplyBtn && couponInput) {
+      couponApplyBtn.addEventListener('click', async function () {
+        var code = couponInput.value.trim().toUpperCase();
+        if (couponError) { couponError.style.display = 'none'; couponError.textContent = ''; }
+        if (!code) {
+          if (couponError) { couponError.textContent = 'Enter a code'; couponError.style.display = 'block'; }
+          return;
+        }
+        var main = window.MITTELY.main;
+        if (main) main.setLoading(couponApplyBtn, true);
+        try {
+          if (!window.MITTELY.supabase) throw new Error('Service unavailable');
+          var res = await window.MITTELY.supabase
+            .from('coupons')
+            .select('code, type, value, min_subtotal, max_uses, used_count, expires_at, is_active')
+            .eq('code', code)
+            .maybeSingle();
+          var c = res && res.data;
+          if (!c || !c.is_active) throw new Error('Invalid or inactive code');
+          if (c.expires_at && new Date(c.expires_at).getTime() < Date.now()) throw new Error('Coupon expired');
+          if (c.max_uses != null && c.used_count >= c.max_uses) throw new Error('Coupon usage limit reached');
+          if (Number(c.min_subtotal) > 0 && subtotalUSD() < Number(c.min_subtotal)) {
+            throw new Error('Minimum subtotal not met');
+          }
+          coupon = { code: c.code, type: c.type, value: c.value };
+          writeCoupon(coupon);
+          if (couponInput) couponInput.value = '';
+          render();
+          if (main) main.toast('Coupon applied', 'success');
+        } catch (err) {
+          if (couponError) { couponError.textContent = (err && err.message) || 'Invalid code'; couponError.style.display = 'block'; }
+        } finally {
+          if (main) main.setLoading(couponApplyBtn, false);
+        }
+      });
+    }
+
+    if (couponRemoveBtn) {
+      couponRemoveBtn.addEventListener('click', function () {
+        coupon = null;
+        clearCoupon();
+        render();
+        if (window.MITTELY.main) window.MITTELY.main.toast('Coupon removed', 'info');
+      });
+    }
+
+    if (checkoutBtn) {
+      checkoutBtn.addEventListener('click', function () {
+        if (!readCart().length) {
+          if (window.MITTELY.main) window.MITTELY.main.toast('Your cart is empty', 'error');
+          return;
+        }
+        location.href = 'checkout.html';
+      });
+    }
+
+    document.addEventListener('mittely:currency-changed', function () { render(); });
+    render();
+  }
+
+  /* ---------- Init ---------- */
+
+  function init() {
+    syncBadge();
+    document.addEventListener('mittely:cart-changed', syncBadge);
+  }
+
+  window.MITTELY.cart = {
+    readCart: readCart,
+    writeCart: writeCart,
+    addItem: addItem,
+    removeItem: removeItem,
+    setQty: setQty,
+    clearCart: clearCart,
+    cartCount: cartCount,
+    syncBadge: syncBadge,
+    readCoupon: readCoupon,
+    writeCoupon: writeCoupon,
+    clearCoupon: clearCoupon,
+    subtotalUSD: subtotalUSD,
+    discountUSD: discountUSD,
+    totalUSD: totalUSD,
+    refreshFromDb: refreshFromDb,
+    initCartPage: initCartPage
   };
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
+  }
 })();

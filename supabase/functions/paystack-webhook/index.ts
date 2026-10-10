@@ -1,84 +1,102 @@
-// ============================================================================
-// MITTELY — Edge Function: paystack-webhook
-// Verifies x-paystack-signature (HMAC-SHA512) and updates order status on
-// charge.success / charge.failed. Deploy and register the URL in Paystack.
-// URL: https://<project-ref>.supabase.co/functions/v1/paystack-webhook
-// ============================================================================
+// ============================================
+// MITTELY — paystack-webhook Edge Function
+// Verifies x-paystack-signature (HMAC-SHA512),
+// updates order status on charge.success /
+// charge.failed. Idempotent: will not overwrite
+// a success with a failure.
+// ============================================
 
-import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
+import { serve } from "https://deno.land/std@0.203.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const PAYSTACK_SECRET_KEY = Deno.env.get("PAYSTACK_SECRET_KEY") ?? "";
-const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
-const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
+const encoder = new TextEncoder();
 
-async function hmacSha512Hex(key: string, msg: string): Promise<string> {
-  const enc = new TextEncoder();
-  const cryptoKey = await crypto.subtle.importKey(
-    "raw",
-    enc.encode(key),
-    { name: "HMAC", hash: "SHA-512" },
-    false,
-    ["sign"],
-  );
-  const sig = await crypto.subtle.sign("HMAC", cryptoKey, enc.encode(msg));
-  return Array.from(new Uint8Array(sig))
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
+async function verifySignature(rawBody: string, signature: string, secret: string): Promise<boolean> {
+  try {
+    const key = await crypto.subtle.importKey(
+      "raw",
+      encoder.encode(secret),
+      { name: "HMAC", hash: "SHA-512" },
+      false,
+      ["sign"],
+    );
+    const sigBuf = await crypto.subtle.sign("HMAC", key, encoder.encode(rawBody));
+    const computed = Array.from(new Uint8Array(sigBuf))
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join("");
+    // constant-time-ish compare
+    if (computed.length !== signature.length) return false;
+    let diff = 0;
+    for (let i = 0; i < computed.length; i++) {
+      diff |= computed.charCodeAt(i) ^ signature.charCodeAt(i);
+    }
+    return diff === 0;
+  } catch {
+    return false;
+  }
 }
 
-serve(async (req: Request) => {
+serve(async (req) => {
   if (req.method !== "POST") {
-    return new Response(JSON.stringify({ ok: false, reason: "method_not_allowed" }), {
-      status: 405, headers: { "content-type": "application/json" },
-    });
+    return new Response("Method Not Allowed", { status: 405 });
   }
 
-  if (!PAYSTACK_SECRET_KEY || !SUPABASE_URL || !SERVICE_ROLE) {
-    return new Response(JSON.stringify({ ok: false, reason: "server_not_configured" }), {
-      status: 500, headers: { "content-type": "application/json" },
-    });
+  const PAYSTACK_SECRET_KEY = Deno.env.get("PAYSTACK_SECRET_KEY");
+  const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
+  const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+
+  if (!PAYSTACK_SECRET_KEY || !SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
+    return new Response("Server misconfigured", { status: 500 });
   }
 
-  const raw = await req.text();
-  const signature = req.headers.get("x-paystack-signature") ?? "";
-  const expected = await hmacSha512Hex(PAYSTACK_SECRET_KEY, raw);
+  const signature = req.headers.get("x-paystack-signature") || "";
+  const rawBody = await req.text();
 
-  if (!signature || signature.toLowerCase() !== expected.toLowerCase()) {
-    return new Response(JSON.stringify({ ok: false, reason: "invalid_signature" }), {
-      status: 401, headers: { "content-type": "application/json" },
-    });
+  const valid = await verifySignature(rawBody, signature, PAYSTACK_SECRET_KEY);
+  if (!valid) {
+    return new Response("Invalid signature", { status: 401 });
   }
 
   let event: any;
-  try { event = JSON.parse(raw); }
-  catch { return new Response(JSON.stringify({ ok: false, reason: "bad_json" }), { status: 400 }); }
+  try {
+    event = JSON.parse(rawBody);
+  } catch {
+    return new Response("Invalid JSON", { status: 400 });
+  }
 
-  const eventName = String(event?.event || "");
-  const reference = String(event?.data?.reference || "");
+  const eventType: string = event?.event || "";
+  const data = event?.data || {};
+  const reference: string = data?.reference || "";
+
   if (!reference) {
-    return new Response(JSON.stringify({ ok: true, ignored: true }), { status: 200 });
+    return new Response("Missing reference", { status: 400 });
   }
 
-  const sb = createClient(SUPABASE_URL, SERVICE_ROLE, { auth: { persistSession: false } });
+  const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
-  if (eventName === "charge.success") {
-    // Only downgrade pending -> success; never downgrade a success back.
-    await sb.from("orders").update({ status: "success" }).eq("paystack_reference", reference).eq("status", "pending");
-  } else if (eventName === "charge.failed") {
-    await sb.from("orders").update({ status: "failed" }).eq("paystack_reference", reference).eq("status", "pending");
-  } else if (eventName === "refund.processed") {
-    // Optional: mark refunds — schema does not track refunds, so we log activity.
-    const { data: order } = await sb.from("orders").select("email,id").eq("paystack_reference", reference).maybeSingle();
-    if (order?.email) {
-      await sb.rpc("log_activity", {
-        p_email: order.email, p_event: "order",
-        p_meta: { refunded: true, reference },
-      }).catch(() => {});
+  try {
+    if (eventType === "charge.success") {
+      // Only update if not already success (idempotent)
+      await supabase
+        .from("orders")
+        .update({ status: "success" })
+        .eq("paystack_reference", reference)
+        .neq("status", "success");
+    } else if (eventType === "charge.failed") {
+      // Do NOT downgrade an existing success order
+      await supabase
+        .from("orders")
+        .update({ status: "failed" })
+        .eq("paystack_reference", reference)
+        .eq("status", "pending");
     }
+    // Other events are acknowledged but ignored.
+  } catch (e) {
+    return new Response("Processing error", { status: 500 });
   }
 
-  return new Response(JSON.stringify({ ok: true }), {
-    status: 200, headers: { "content-type": "application/json" },
+  return new Response(JSON.stringify({ received: true }), {
+    status: 200,
+    headers: { "Content-Type": "application/json" },
   });
 });

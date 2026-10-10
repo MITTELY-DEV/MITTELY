@@ -1,484 +1,395 @@
--- ============================================================================
--- MITTELY — rls.sql
--- Run AFTER schema.sql. Enables Row Level Security on ALL tables and
--- installs triggers + security-definer RPCs used by the app.
--- ============================================================================
+-- ============================================
+-- MITTELY — Row Level Security, Triggers, RPCs
+-- Run AFTER schema.sql
+-- ============================================
 
--- ---------------------------------------------------------------------------
--- Enable RLS on everything
--- ---------------------------------------------------------------------------
-alter table admin_users        enable row level security;
-alter table licenses           enable row level security;
-alter table products           enable row level security;
-alter table orders             enable row level security;
-alter table order_items        enable row level security;
-alter table reviews            enable row level security;
-alter table settings           enable row level security;
-alter table submissions        enable row level security;
-alter table newsletter         enable row level security;
-alter table wishlist           enable row level security;
-alter table coupons            enable row level security;
-alter table blog_posts         enable row level security;
-alter table wallets            enable row level security;
-alter table wallet_transactions enable row level security;
-alter table payout_requests    enable row level security;
-alter table profiles           enable row level security;
-alter table activity_log       enable row level security;
+-- ============ ENABLE RLS ============
+alter table admin_users enable row level security;
+alter table licenses enable row level security;
+alter table products enable row level security;
+alter table orders enable row level security;
+alter table order_items enable row level security;
+alter table reviews enable row level security;
+alter table settings enable row level security;
+alter table submissions enable row level security;
+alter table newsletter enable row level security;
+alter table wishlist enable row level security;
+alter table coupons enable row level security;
+alter table blog_posts enable row level security;
+alter table profiles enable row level security;
+alter table activity_log enable row level security;
 
--- ---------------------------------------------------------------------------
--- admin_users
--- ---------------------------------------------------------------------------
+-- ============ ADMIN_USERS ============
 drop policy if exists admin_users_select on admin_users;
-create policy admin_users_select on admin_users
-  for select using (is_admin());
+create policy admin_users_select on admin_users for select
+  using (is_admin());
 
 drop policy if exists admin_users_insert on admin_users;
-create policy admin_users_insert on admin_users
-  for insert with check (is_admin() and lower(email) <> 'henryagyemang906@gmail.com');
+create policy admin_users_insert on admin_users for insert
+  with check (is_admin() and email <> 'henryagyemang906@gmail.com');
 
 drop policy if exists admin_users_delete on admin_users;
-create policy admin_users_delete on admin_users
-  for delete using (is_admin() and lower(email) <> 'henryagyemang906@gmail.com');
+create policy admin_users_delete on admin_users for delete
+  using (is_admin() and email <> 'henryagyemang906@gmail.com');
 
--- ---------------------------------------------------------------------------
--- licenses — readable by everyone
--- ---------------------------------------------------------------------------
+-- ============ LICENSES ============
 drop policy if exists licenses_select on licenses;
-create policy licenses_select on licenses
-  for select using (true);
+create policy licenses_select on licenses for select using (true);
 
--- ---------------------------------------------------------------------------
--- products
--- ---------------------------------------------------------------------------
-drop policy if exists products_select_published on products;
-create policy products_select_published on products
-  for select using (is_published = true or is_admin());
+drop policy if exists licenses_admin on licenses;
+create policy licenses_admin on licenses for all using (is_admin()) with check (is_admin());
 
-drop policy if exists products_admin_write on products;
-create policy products_admin_write on products
-  for all using (is_admin()) with check (is_admin());
+-- ============ PRODUCTS ============
+drop policy if exists products_select on products;
+create policy products_select on products for select
+  using (is_published = true or is_admin());
 
--- ---------------------------------------------------------------------------
--- settings
--- ---------------------------------------------------------------------------
+drop policy if exists products_admin on products;
+create policy products_admin on products for all
+  using (is_admin()) with check (is_admin());
+
+-- ============ SETTINGS ============
 drop policy if exists settings_select on settings;
-create policy settings_select on settings
-  for select using (true);
+create policy settings_select on settings for select using (true);
 
-drop policy if exists settings_admin_write on settings;
-create policy settings_admin_write on settings
-  for all using (is_admin()) with check (is_admin());
+drop policy if exists settings_update on settings;
+create policy settings_update on settings for update
+  using (is_admin()) with check (is_admin());
 
--- ---------------------------------------------------------------------------
--- reviews
--- ---------------------------------------------------------------------------
-drop policy if exists reviews_select_approved on reviews;
-create policy reviews_select_approved on reviews
-  for select using (status = 'approved' or is_admin() or lower(email) = lower(coalesce(auth.jwt() ->> 'email','')));
+drop policy if exists settings_insert on settings;
+create policy settings_insert on settings for insert
+  with check (is_admin());
 
-drop policy if exists reviews_insert_auth on reviews;
-create policy reviews_insert_auth on reviews
-  for insert to authenticated with check (true);
+-- ============ REVIEWS ============
+drop policy if exists reviews_select on reviews;
+create policy reviews_select on reviews for select
+  using (status = 'approved' or is_admin());
 
-drop policy if exists reviews_admin_write on reviews;
-create policy reviews_admin_write on reviews
-  for update using (is_admin()) with check (is_admin());
+drop policy if exists reviews_insert on reviews;
+create policy reviews_insert on reviews for insert
+  with check (auth.role() = 'authenticated');
 
-drop policy if exists reviews_admin_delete on reviews;
-create policy reviews_admin_delete on reviews
-  for delete using (is_admin());
+drop policy if exists reviews_update on reviews;
+create policy reviews_update on reviews for update
+  using (is_admin()) with check (is_admin());
 
--- Force email/name from the authenticated user on insert.
-create or replace function reviews_force_identity()
-returns trigger language plpgsql security definer as $$
+drop policy if exists reviews_delete on reviews;
+create policy reviews_delete on reviews for delete using (is_admin());
+
+-- ============ SUBMISSIONS ============
+drop policy if exists submissions_insert on submissions;
+create policy submissions_insert on submissions for insert with check (true);
+
+drop policy if exists submissions_select on submissions;
+create policy submissions_select on submissions for select using (is_admin());
+
+drop policy if exists submissions_update on submissions;
+create policy submissions_update on submissions for update
+  using (is_admin()) with check (is_admin());
+
+-- ============ NEWSLETTER ============
+drop policy if exists newsletter_insert on newsletter;
+create policy newsletter_insert on newsletter for insert with check (true);
+
+drop policy if exists newsletter_select on newsletter;
+create policy newsletter_select on newsletter for select using (is_admin());
+
+drop policy if exists newsletter_delete on newsletter;
+create policy newsletter_delete on newsletter for delete using (is_admin());
+
+-- ============ ORDERS ============
+drop policy if exists orders_select on orders;
+create policy orders_select on orders for select
+  using (email = auth.jwt() ->> 'email' or is_admin());
+
+-- ============ ORDER_ITEMS ============
+drop policy if exists order_items_select on order_items;
+create policy order_items_select on order_items for select
+  using (
+    exists (select 1 from orders o where o.id = order_items.order_id and (o.email = auth.jwt() ->> 'email' or is_admin()))
+  );
+
+-- ============ WISHLIST ============
+drop policy if exists wishlist_select on wishlist;
+create policy wishlist_select on wishlist for select
+  using (email = auth.jwt() ->> 'email');
+
+drop policy if exists wishlist_insert on wishlist;
+create policy wishlist_insert on wishlist for insert
+  with check (email = auth.jwt() ->> 'email');
+
+drop policy if exists wishlist_delete on wishlist;
+create policy wishlist_delete on wishlist for delete
+  using (email = auth.jwt() ->> 'email');
+
+-- ============ COUPONS ============
+drop policy if exists coupons_admin on coupons;
+create policy coupons_admin on coupons for all
+  using (is_admin()) with check (is_admin());
+
+-- ============ BLOG POSTS ============
+drop policy if exists blog_posts_select on blog_posts;
+create policy blog_posts_select on blog_posts for select
+  using (status = 'published' or is_admin());
+
+drop policy if exists blog_posts_admin on blog_posts;
+create policy blog_posts_admin on blog_posts for all
+  using (is_admin()) with check (is_admin());
+
+-- ============ PROFILES ============
+drop policy if exists profiles_select on profiles;
+create policy profiles_select on profiles for select
+  using (email = auth.jwt() ->> 'email' or is_admin());
+
+-- ============ ACTIVITY LOG ============
+drop policy if exists activity_log_select on activity_log;
+create policy activity_log_select on activity_log for select
+  using (email = auth.jwt() ->> 'email' or is_admin());
+
+-- ============ TRIGGERS ============
+
+-- (a) Reviews: force email/name from auth + log activity
+create or replace function reviews_before_insert() returns trigger
+language plpgsql security definer as $$
 declare
-  v_email text := lower(coalesce(auth.jwt() ->> 'email',''));
-  v_name  text := coalesce(auth.jwt() -> 'user_metadata' ->> 'full_name',
-                           auth.jwt() -> 'user_metadata' ->> 'name',
-                           v_email);
+  v_email text;
+  v_name text;
 begin
-  if v_email = '' then
-    raise exception 'Authentication required';
+  v_email := auth.jwt() ->> 'email';
+  v_name := coalesce(auth.jwt() -> 'user_metadata' ->> 'full_name', v_email);
+  if v_email is not null then
+    new.email := v_email;
+    if new.name is null or new.name = '' then new.name := v_name; end if;
   end if;
-  new.email := v_email;
-  new.name := coalesce(nullif(new.name,''), v_name);
+  new.status := 'pending';
   return new;
-end; $$;
+end;
+$$;
 
-drop trigger if exists reviews_force_identity on reviews;
-create trigger reviews_force_identity before insert on reviews
-for each row execute function reviews_force_identity();
+drop trigger if exists trg_reviews_before_insert on reviews;
+create trigger trg_reviews_before_insert
+  before insert on reviews
+  for each row execute function reviews_before_insert();
 
--- Log activity on insert.
-create or replace function reviews_log()
-returns trigger language plpgsql security definer as $$
+create or replace function reviews_after_insert() returns trigger
+language plpgsql security definer as $$
 begin
   perform log_activity(new.email, 'review', jsonb_build_object('product_id', new.product_id, 'rating', new.rating));
   return new;
-end; $$;
+end;
+$$;
 
-drop trigger if exists reviews_log on reviews;
-create trigger reviews_log after insert on reviews
-for each row execute function reviews_log();
+drop trigger if exists trg_reviews_after_insert on reviews;
+create trigger trg_reviews_after_insert
+  after insert on reviews
+  for each row execute function reviews_after_insert();
 
--- ---------------------------------------------------------------------------
--- submissions — anon insert; admin read/write
--- ---------------------------------------------------------------------------
-drop policy if exists submissions_insert_anon on submissions;
-create policy submissions_insert_anon on submissions
-  for insert to anon, authenticated with check (true);
+-- (b) Updated_at auto-touch
+create or replace function touch_updated_at() returns trigger
+language plpgsql as $$
+begin
+  new.updated_at := now();
+  return new;
+end;
+$$;
 
-drop policy if exists submissions_admin_read on submissions;
-create policy submissions_admin_read on submissions
-  for select using (is_admin());
+drop trigger if exists trg_products_updated_at on products;
+create trigger trg_products_updated_at
+  before update on products
+  for each row execute function touch_updated_at();
 
-drop policy if exists submissions_admin_write on submissions;
-create policy submissions_admin_write on submissions
-  for update using (is_admin()) with check (is_admin());
+drop trigger if exists trg_blog_posts_updated_at on blog_posts;
+create trigger trg_blog_posts_updated_at
+  before update on blog_posts
+  for each row execute function touch_updated_at();
 
--- ---------------------------------------------------------------------------
--- newsletter — anon insert; admin read/write
--- ---------------------------------------------------------------------------
-drop policy if exists newsletter_insert_anon on newsletter;
-create policy newsletter_insert_anon on newsletter
-  for insert to anon, authenticated with check (true);
+-- (c) Wishlist: enforce email + log
+create or replace function wishlist_before_insert() returns trigger
+language plpgsql security definer as $$
+declare
+  v_email text;
+begin
+  v_email := auth.jwt() ->> 'email';
+  if v_email is null then
+    raise exception 'Authentication required';
+  end if;
+  new.email := v_email;
+  return new;
+end;
+$$;
 
-drop policy if exists newsletter_admin_read on newsletter;
-create policy newsletter_admin_read on newsletter
-  for select using (is_admin());
+drop trigger if exists trg_wishlist_before_insert on wishlist;
+create trigger trg_wishlist_before_insert
+  before insert on wishlist
+  for each row execute function wishlist_before_insert();
 
-drop policy if exists newsletter_admin_write on newsletter;
-create policy newsletter_admin_write on newsletter
-  for all using (is_admin()) with check (is_admin());
-
--- ---------------------------------------------------------------------------
--- orders + order_items — owner / admin read only; no client writes.
--- ---------------------------------------------------------------------------
-drop policy if exists orders_select_own on orders;
-create policy orders_select_own on orders
-  for select using (
-    lower(email) = lower(coalesce(auth.jwt() ->> 'email','')) or is_admin()
-  );
-
-drop policy if exists order_items_select_own on order_items;
-create policy order_items_select_own on order_items
-  for select using (
-    exists (
-      select 1 from orders o
-      where o.id = order_items.order_id
-        and (lower(o.email) = lower(coalesce(auth.jwt() ->> 'email','')) or is_admin())
-    )
-  );
-
--- ---------------------------------------------------------------------------
--- wishlist — own rows
--- ---------------------------------------------------------------------------
-drop policy if exists wishlist_select_own on wishlist;
-create policy wishlist_select_own on wishlist
-  for select using (lower(email) = lower(coalesce(auth.jwt() ->> 'email','')));
-
-drop policy if exists wishlist_insert_own on wishlist;
-create policy wishlist_insert_own on wishlist
-  for insert to authenticated with check (lower(email) = lower(coalesce(auth.jwt() ->> 'email','')));
-
-drop policy if exists wishlist_delete_own on wishlist;
-create policy wishlist_delete_own on wishlist
-  for delete using (lower(email) = lower(coalesce(auth.jwt() ->> 'email','')));
-
--- Log activity on wishlist insert.
-create or replace function wishlist_log()
-returns trigger language plpgsql security definer as $$
+create or replace function wishlist_after_insert() returns trigger
+language plpgsql security definer as $$
 begin
   perform log_activity(new.email, 'wishlist', jsonb_build_object('product_id', new.product_id));
   return new;
-end; $$;
+end;
+$$;
 
-drop trigger if exists wishlist_log on wishlist;
-create trigger wishlist_log after insert on wishlist
-for each row execute function wishlist_log();
+drop trigger if exists trg_wishlist_after_insert on wishlist;
+create trigger trg_wishlist_after_insert
+  after insert on wishlist
+  for each row execute function wishlist_after_insert();
 
--- ---------------------------------------------------------------------------
--- coupons — NO client policies; admin full access
--- ---------------------------------------------------------------------------
-drop policy if exists coupons_admin_all on coupons;
-create policy coupons_admin_all on coupons
-  for all using (is_admin()) with check (is_admin());
-
--- ---------------------------------------------------------------------------
--- blog_posts
--- ---------------------------------------------------------------------------
-drop policy if exists blog_select_published on blog_posts;
-create policy blog_select_published on blog_posts
-  for select using (status = 'published' or is_admin());
-
-drop policy if exists blog_admin_write on blog_posts;
-create policy blog_admin_write on blog_posts
-  for all using (is_admin()) with check (is_admin());
-
--- ---------------------------------------------------------------------------
--- wallets + wallet_transactions
--- ---------------------------------------------------------------------------
-drop policy if exists wallets_select_own on wallets;
-create policy wallets_select_own on wallets
-  for select using (
-    lower(email) = lower(coalesce(auth.jwt() ->> 'email','')) or is_admin()
-  );
-
-drop policy if exists wallet_tx_select_own on wallet_transactions;
-create policy wallet_tx_select_own on wallet_transactions
-  for select using (
-    lower(email) = lower(coalesce(auth.jwt() ->> 'email','')) or is_admin()
-  );
-
--- ---------------------------------------------------------------------------
--- payout_requests
--- ---------------------------------------------------------------------------
-drop policy if exists payout_select_own on payout_requests;
-create policy payout_select_own on payout_requests
-  for select using (
-    lower(email) = lower(coalesce(auth.jwt() ->> 'email','')) or is_admin()
-  );
-
-drop policy if exists payout_insert_own on payout_requests;
-create policy payout_insert_own on payout_requests
-  for insert to authenticated with check (lower(email) = lower(coalesce(auth.jwt() ->> 'email','')));
-
-drop policy if exists payout_admin_update on payout_requests;
-create policy payout_admin_update on payout_requests
-  for update using (is_admin()) with check (is_admin());
-
--- ---------------------------------------------------------------------------
--- profiles
--- ---------------------------------------------------------------------------
-drop policy if exists profiles_select on profiles;
-create policy profiles_select on profiles
-  for select using (
-    lower(email) = lower(coalesce(auth.jwt() ->> 'email','')) or is_admin()
-  );
-
--- ---------------------------------------------------------------------------
--- activity_log
--- ---------------------------------------------------------------------------
-drop policy if exists activity_select on activity_log;
-create policy activity_select on activity_log
-  for select using (
-    lower(email) = lower(coalesce(auth.jwt() ->> 'email','')) or is_admin()
-  );
-
--- ---------------------------------------------------------------------------
--- handle_new_user() — create profile + wallet + log signup
--- ---------------------------------------------------------------------------
-create or replace function handle_new_user()
-returns trigger language plpgsql security definer as $$
-declare
-  v_email text := lower(coalesce(new.email,''));
-  v_name  text := coalesce(new.raw_user_meta_data ->> 'full_name', new.raw_user_meta_data ->> 'name', v_email);
-  v_avatar text := coalesce(new.raw_user_meta_data ->> 'avatar_url', '');
+-- (d) handle_new_user → profiles + activity
+create or replace function handle_new_user() returns trigger
+language plpgsql security definer as $$
 begin
   insert into profiles (id, email, name, avatar_url)
-  values (new.id, v_email, v_name, v_avatar)
+  values (
+    new.id,
+    new.email,
+    coalesce(new.raw_user_meta_data ->> 'full_name', new.raw_user_meta_data ->> 'name', new.email),
+    new.raw_user_meta_data ->> 'avatar_url'
+  )
   on conflict (id) do update set
     email = excluded.email,
     name = excluded.name,
     avatar_url = excluded.avatar_url;
-
-  insert into wallets (email, balance)
-  values (v_email, 0)
-  on conflict (email) do nothing;
-
-  perform log_activity(v_email, 'signup', jsonb_build_object('source','google'));
+  perform log_activity(new.email, 'signup', '{}'::jsonb);
   return new;
-end; $$;
+end;
+$$;
 
 drop trigger if exists on_auth_user_created on auth.users;
 create trigger on_auth_user_created
   after insert on auth.users
   for each row execute function handle_new_user();
 
--- ---------------------------------------------------------------------------
--- RPC: log_activity
--- ---------------------------------------------------------------------------
-create or replace function log_activity(p_email text, p_event text, p_meta jsonb default '{}'::jsonb)
-returns void language plpgsql security definer as $$
+-- ============ RPCs ============
+
+-- is_admin_rpc (client-callable wrapper)
+create or replace function is_admin_rpc() returns boolean
+language sql security definer stable as $$
+  select is_admin();
+$$;
+
+-- log_activity (client-callable; email scoped to caller)
+create or replace function log_activity(p_email text, p_event text, p_meta jsonb)
+returns void
+language plpgsql security definer as $$
+declare
+  v_email text;
 begin
-  if p_email is null or p_email = '' then return; end if;
-  insert into activity_log (email, event, meta)
-  values (lower(p_email), p_event, coalesce(p_meta, '{}'::jsonb));
-end; $$;
-
--- ---------------------------------------------------------------------------
--- RPC: increment counters
--- ---------------------------------------------------------------------------
-create or replace function increment_sales_count(p_id uuid)
-returns void language sql security definer as $$
-  update products set sales_count = coalesce(sales_count,0) + 1 where id = p_id;
+  v_email := auth.jwt() ->> 'email';
+  if v_email is null then
+    raise exception 'Authentication required';
+  end if;
+  if p_email is null or p_email <> v_email then
+    raise exception 'Cannot log activity for another user';
+  end if;
+  insert into activity_log (email, event, meta) values (v_email, p_event, coalesce(p_meta, '{}'::jsonb));
+end;
 $$;
 
-create or replace function increment_download_count(p_id uuid)
-returns void language sql security definer as $$
-  update products set download_count = coalesce(download_count,0) + 1 where id = p_id;
+-- increment_sales_count
+create or replace function increment_sales_count(p_product_id uuid)
+returns void
+language sql security definer as $$
+  update products set sales_count = coalesce(sales_count, 0) + 1 where id = p_product_id;
 $$;
 
-create or replace function increment_reviews_count(p_id uuid)
-returns void language sql security definer as $$
-  update products set reviews_count = coalesce(reviews_count,0) + 1 where id = p_id;
+-- increment_download_count
+create or replace function increment_download_count(p_product_id uuid)
+returns void
+language sql security definer as $$
+  update products set download_count = coalesce(download_count, 0) + 1 where id = p_product_id;
 $$;
 
-create or replace function increment_blog_views(p_id uuid)
-returns void language sql security definer as $$
-  update blog_posts set views_count = coalesce(views_count,0) + 1 where id = p_id;
+-- increment_reviews_count
+create or replace function increment_reviews_count(p_product_id uuid)
+returns void
+language sql security definer as $$
+  update products set reviews_count = coalesce(reviews_count, 0) + 1 where id = p_product_id;
 $$;
 
--- ---------------------------------------------------------------------------
--- RPC: get_site_stats
--- ---------------------------------------------------------------------------
+-- increment_blog_views
+create or replace function increment_blog_views(post_id uuid)
+returns void
+language sql security definer as $$
+  update blog_posts set views_count = coalesce(views_count, 0) + 1 where id = post_id and status = 'published';
+$$;
+
+-- get_site_stats
 create or replace function get_site_stats()
-returns jsonb language sql security definer stable as $$
-  select jsonb_build_object(
-    'products',  (select count(*) from products where is_published = true),
-    'downloads', (select coalesce(sum(download_count),0) from products),
-    'reviews',   (select count(*) from reviews where status = 'approved'),
-    'designers', (select count(distinct designer_email) from products where designer_email is not null)
+returns jsonb
+language plpgsql security definer stable as $$
+declare
+  v_products int;
+  v_orders int;
+  v_downloads int;
+begin
+  select count(*) into v_products from products where is_published = true;
+  select count(*) into v_orders from orders where status = 'success';
+  select coalesce(sum(download_count), 0) into v_downloads from products;
+  return jsonb_build_object(
+    'products_count', v_products,
+    'orders_count', v_orders,
+    'downloads_count', v_downloads
   );
+end;
 $$;
 
--- ---------------------------------------------------------------------------
--- RPC: get_fx_rate (server-side fallback; real fetch happens in the Edge Fn)
--- ---------------------------------------------------------------------------
+-- get_fx_rate — returns the fallback rate from settings (used server-side in verify-payment)
 create or replace function get_fx_rate()
-returns numeric language sql security definer stable as $$
-  select coalesce(
-    (select nullif(svalue,'')::numeric from settings where skey = 'fx_fallback_rate'),
-    15.50
-  );
+returns numeric
+language plpgsql security definer stable as $$
+declare
+  v numeric;
+begin
+  select svalue::numeric into v from settings where skey = 'fx_fallback_rate' limit 1;
+  if v is null or v <= 0 then v := 15.50; end if;
+  return v;
+end;
 $$;
 
--- ---------------------------------------------------------------------------
--- RPC: credit_wallet
--- ---------------------------------------------------------------------------
-create or replace function credit_wallet(p_email text, p_amount numeric, p_type text, p_note text)
-returns numeric language plpgsql security definer as $$
-declare
-  v_balance numeric;
-begin
-  if p_email is null or p_email = '' then raise exception 'email required'; end if;
-  if p_type not in ('earning','payout','adjustment') then raise exception 'invalid type'; end if;
-  if p_amount is null or p_amount = 0 then raise exception 'invalid amount'; end if;
-
-  insert into wallets (email, balance)
-  values (lower(p_email), 0)
-  on conflict (email) do nothing;
-
-  select balance into v_balance from wallets where email = lower(p_email) for update;
-  v_balance := coalesce(v_balance, 0) + p_amount;
-
-  if v_balance < 0 then
-    raise exception 'insufficient balance';
-  end if;
-
-  update wallets set balance = v_balance, updated_at = now() where email = lower(p_email);
-
-  insert into wallet_transactions (email, type, amount, balance_after, note)
-  values (lower(p_email), p_type, p_amount, v_balance, p_note);
-
-  return v_balance;
-end; $$;
-
--- ---------------------------------------------------------------------------
--- RPC: request_payout
--- ---------------------------------------------------------------------------
-create or replace function request_payout(p_amount numeric)
-returns jsonb language plpgsql security definer as $$
-declare
-  v_email text := lower(coalesce(auth.jwt() ->> 'email',''));
-  v_balance numeric;
-  v_min numeric := 20;
-begin
-  if v_email = '' then return jsonb_build_object('ok', false, 'reason', 'auth_required'); end if;
-  if p_amount is null or p_amount < v_min then
-    return jsonb_build_object('ok', false, 'reason', 'min_20');
-  end if;
-
-  insert into wallets (email, balance)
-  values (v_email, 0)
-  on conflict (email) do nothing;
-
-  select balance into v_balance from wallets where email = v_email for update;
-  if coalesce(v_balance,0) < p_amount then
-    return jsonb_build_object('ok', false, 'reason', 'insufficient_balance');
-  end if;
-
-  perform credit_wallet(v_email, -p_amount, 'payout', 'Payout request escrow');
-
-  insert into payout_requests (email, amount, status)
-  values (v_email, p_amount, 'pending');
-
-  perform log_activity(v_email, 'payout_request', jsonb_build_object('amount', p_amount));
-  return jsonb_build_object('ok', true);
-end; $$;
-
--- ---------------------------------------------------------------------------
--- RPC: admin_list_users
--- ---------------------------------------------------------------------------
-create or replace function admin_list_users(p_search text default null, p_limit int default 20, p_offset int default 0)
+-- admin_list_users (admin-only) — profiles + order / spend / download aggregates
+create or replace function admin_list_users()
 returns table (
-  id uuid, email text, name text, avatar_url text,
-  orders_count int, total_spent numeric, downloads int, wallet_balance numeric
-) language sql security definer stable as $$
-  select
-    p.id, p.email, p.name, p.avatar_url,
-    coalesce((select count(*)::int from orders o where lower(o.email) = lower(p.email) and o.status = 'success'), 0),
-    coalesce((select sum(o.usd_amount) from orders o where lower(o.email) = lower(p.email) and o.status = 'success'), 0),
-    coalesce((select sum(pr.download_count) from products pr where lower(pr.designer_email) = lower(p.email)), 0),
-    coalesce((select w.balance from wallets w where lower(w.email) = lower(p.email)), 0)
-  from profiles p
-  where is_admin()
-    and (p_search is null or p_search = '' or p.email ilike '%' || p_search || '%' or coalesce(p.name,'') ilike '%' || p_search || '%')
-  order by p.created_at desc
-  limit greatest(p_limit,1) offset greatest(p_offset,0);
-$$;
-
--- ---------------------------------------------------------------------------
--- RPC: admin_handle_payout
--- ---------------------------------------------------------------------------
-create or replace function admin_handle_payout(p_id uuid, p_action text, p_note text default null)
-returns jsonb language plpgsql security definer as $$
-declare
-  v_row payout_requests;
+  id uuid,
+  email text,
+  name text,
+  avatar_url text,
+  created_at timestamptz,
+  orders_count int,
+  total_spent_usd numeric,
+  downloads_count int
+)
+language plpgsql security definer stable as $$
 begin
-  if not is_admin() then return jsonb_build_object('ok', false, 'reason', 'forbidden'); end if;
-  if p_action not in ('paid','rejected') then return jsonb_build_object('ok', false, 'reason', 'bad_action'); end if;
-
-  select * into v_row from payout_requests where id = p_id for update;
-  if v_row is null then return jsonb_build_object('ok', false, 'reason', 'not_found'); end if;
-  if v_row.status <> 'pending' then return jsonb_build_object('ok', false, 'reason', 'already_handled'); end if;
-
-  if p_action = 'paid' then
-    update payout_requests set status = 'paid', handled_at = now(), note = p_note where id = p_id;
-    perform log_activity(v_row.email, 'payout_paid', jsonb_build_object('amount', v_row.amount));
-  else
-    update payout_requests set status = 'rejected', handled_at = now(), note = p_note where id = p_id;
-    -- Refund the held amount.
-    perform credit_wallet(v_row.email, v_row.amount, 'adjustment', 'Payout rejected: ' || coalesce(p_note,''));
+  if not is_admin() then
+    raise exception 'Admin only';
   end if;
-
-  return jsonb_build_object('ok', true);
-end; $$;
-
--- ---------------------------------------------------------------------------
--- RPC: admin_stats
--- ---------------------------------------------------------------------------
-create or replace function admin_stats()
-returns jsonb language sql security definer stable as $$
-  select jsonb_build_object(
-    'revenue_today', coalesce((select sum(usd_amount) from orders where status = 'success' and created_at::date = current_date), 0),
-    'revenue_7d',    coalesce((select sum(usd_amount) from orders where status = 'success' and created_at >= now() - interval '7 days'), 0),
-    'revenue_30d',   coalesce((select sum(usd_amount) from orders where status = 'success' and created_at >= now() - interval '30 days'), 0),
-    'revenue_all',   coalesce((select sum(usd_amount) from orders where status = 'success'), 0),
-    'orders_count',  (select count(*) from orders),
-    'downloads_count', (select coalesce(sum(download_count),0) from products),
-    'pending_reviews', (select count(*) from reviews where status = 'pending'),
-    'pending_submissions', (select count(*) from submissions where status = 'pending'),
-    'pending_payouts', (select count(*) from payout_requests where status = 'pending')
-  ) where is_admin();
+  return query
+  select
+    p.id,
+    p.email,
+    p.name,
+    p.avatar_url,
+    p.created_at,
+    coalesce((select count(*) from orders o where o.email = p.email and o.status = 'success'), 0)::int,
+    coalesce((select sum(o.usd_amount) from orders o where o.email = p.email and o.status = 'success'), 0)::numeric,
+    coalesce((
+      select count(*) from activity_log a
+      where a.email = p.email and a.event = 'download'
+    ), 0)::int
+  from profiles p
+  order by p.created_at desc;
+end;
 $$;
+
+-- ============ Grants ============
+grant execute on function is_admin_rpc() to anon, authenticated;
+grant execute on function log_activity(text, text, jsonb) to authenticated;
+grant execute on function get_site_stats() to anon, authenticated;
+grant execute on function get_fx_rate() to anon, authenticated;
+grant execute on function increment_sales_count(uuid) to authenticated;
+grant execute on function increment_download_count(uuid) to authenticated;
+grant execute on function increment_reviews_count(uuid) to authenticated;
+grant execute on function increment_blog_views(uuid) to anon, authenticated;
+grant execute on function admin_list_users() to authenticated;

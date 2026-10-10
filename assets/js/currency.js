@@ -1,137 +1,204 @@
-/* MITTELY — currency.js
-   Fetches live USD->GHS, caches in localStorage 6h, falls back to settings fx_fallback_rate.
-   Exposes window.mittelyCurrency.{rate, refresh, format}. */
+/* ============================================
+   MITTELY — currency.js
+   Live USD→GHS rate, localStorage cache (6h TTL),
+   fallback to settings.fx_fallback_rate, switcher,
+   convert() + formatMoney delegation.
+   ============================================ */
 (function () {
   'use strict';
 
-  var CACHE_KEY = 'mittely-fx';
-  var TTL_MS = 6 * 60 * 60 * 1000;
-  var ENDPOINT = 'https://open.er-api.com/v6/latest/USD';
-  var DEFAULT_FALLBACK = 15.5;
-  var FALLBACK_KEY = 'fx_fallback_rate';
+  if (!window.MITTELY) window.MITTELY = {};
 
-  function readCache() {
+  var STORAGE_KEY = 'mittely-currency';
+  var RATE_KEY = 'mittely_fx_rate';
+  var TTL = 6 * 60 * 60 * 1000; /* 6 hours */
+  var API_URL = 'https://open.er-api.com/v6/latest/USD';
+  var FALLBACK_DEFAULT = 15.50;
+
+  var state = {
+    current: 'USD',
+    rate: FALLBACK_DEFAULT,
+    rateLoaded: false
+  };
+
+  /* ---------- Storage helpers ---------- */
+
+  function readRateCache() {
     try {
-      var raw = localStorage.getItem(CACHE_KEY);
+      var raw = localStorage.getItem(RATE_KEY);
       if (!raw) return null;
       var parsed = JSON.parse(raw);
-      if (!parsed || !parsed.rate || !parsed.at) return null;
-      return parsed;
+      if (!parsed || !parsed.rate || !parsed.ts) return null;
+      if (Date.now() - parsed.ts > TTL) return null;
+      return parsed.rate;
     } catch (e) { return null; }
   }
 
-  function writeCache(rate) {
+  function writeRateCache(rate) {
     try {
-      localStorage.setItem(CACHE_KEY, JSON.stringify({ rate: rate, at: Date.now() }));
+      localStorage.setItem(RATE_KEY, JSON.stringify({ rate: rate, ts: Date.now() }));
     } catch (e) {}
   }
 
-  function isFresh(cache) {
-    return cache && (Date.now() - cache.at) < TTL_MS;
-  }
-
-  function fetchFallbackFromSettings() {
-    var sb = window.mittely && window.mittely.sb && window.mittely.sb();
-    if (!sb) return Promise.resolve(DEFAULT_FALLBACK);
-    return sb.from('settings').select('svalue').eq('skey', FALLBACK_KEY).maybeSingle()
-      .then(function (res) {
-        var v = res && res.data && res.data.svalue;
-        var num = parseFloat(v);
-        return isFinite(num) && num > 0 ? num : DEFAULT_FALLBACK;
-      })
-      .catch(function () { return DEFAULT_FALLBACK; });
-  }
-
-  var state = {
-    rate: DEFAULT_FALLBACK,
-    source: 'default',
-    loading: null
-  };
-
-  function refresh() {
-    if (state.loading) return state.loading;
-
-    var cached = readCache();
-    if (isFresh(cached)) {
-      state.rate = cached.rate;
-      state.source = 'cache';
-      emit();
-      return Promise.resolve(state.rate);
-    }
-
-    state.loading = fetch(ENDPOINT, { cache: 'no-store' })
-      .then(function (r) { return r.json(); })
-      .then(function (json) {
-        var rate = json && json.rates && json.rates.GHS;
-        var num = parseFloat(rate);
-        if (!isFinite(num) || num <= 0) throw new Error('bad rate');
-        state.rate = num;
-        state.source = 'live';
-        writeCache(num);
-        emit();
-        return num;
-      })
-      .catch(function () {
-        return fetchFallbackFromSettings().then(function (fallback) {
-          state.rate = fallback;
-          state.source = 'fallback';
-          emit();
-          return fallback;
-        });
-      })
-      .finally(function () { state.loading = null; });
-
-    return state.loading;
-  }
-
-  function emit() {
-    document.dispatchEvent(new CustomEvent('mittely:fx-updated', {
-      detail: { rate: state.rate, source: state.source }
-    }));
-  }
-
-  function currentRate() {
-    var cached = readCache();
-    if (isFresh(cached)) return cached.rate;
-    return state.rate || DEFAULT_FALLBACK;
-  }
-
-  function format(usd, currency) {
-    var cur = currency || (localStorage.getItem('mittely-currency') || 'USD');
-    var amount = Number(usd || 0);
+  function readCurrent() {
     try {
-      if (cur === 'GHS') {
-        var value = amount * currentRate();
-        return new Intl.NumberFormat('en-GH', {
-          style: 'currency', currency: 'GHS',
-          minimumFractionDigits: 2, maximumFractionDigits: 2
-        }).format(value);
-      }
-      return new Intl.NumberFormat('en-US', {
-        style: 'currency', currency: 'USD',
-        minimumFractionDigits: 2, maximumFractionDigits: 2
-      }).format(amount);
+      var c = localStorage.getItem(STORAGE_KEY);
+      if (c === 'GHS' || c === 'USD') return c;
+    } catch (e) {}
+    return 'USD';
+  }
+
+  function writeCurrent(c) {
+    try { localStorage.setItem(STORAGE_KEY, c); } catch (e) {}
+  }
+
+  /* ---------- Rate loading ---------- */
+
+  async function loadFallbackRate() {
+    try {
+      if (!window.MITTELY.supabase) return FALLBACK_DEFAULT;
+      var res = await window.MITTELY.supabase
+        .from('settings').select('svalue').eq('skey', 'fx_fallback_rate').maybeSingle();
+      var val = res && res.data && res.data.svalue ? parseFloat(res.data.svalue) : NaN;
+      return isFinite(val) && val > 0 ? val : FALLBACK_DEFAULT;
     } catch (e) {
-      return (cur === 'GHS' ? 'GH₵ ' : '$') + amount.toFixed(2);
+      return FALLBACK_DEFAULT;
     }
   }
 
-  function onReady(fn) {
-    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', fn);
-    else fn();
+  async function fetchLiveRate() {
+    try {
+      var res = await fetch(API_URL, { cache: 'no-store' });
+      if (!res.ok) throw new Error('Bad response');
+      var data = await res.json();
+      var rate = data && data.rates && data.rates.GHS ? parseFloat(data.rates.GHS) : NaN;
+      if (!isFinite(rate) || rate <= 0) throw new Error('Bad rate');
+      return rate;
+    } catch (e) {
+      return null;
+    }
   }
 
-  onReady(function () {
-    refresh().then(function () {
-      // Re-render prices across the page when rate changes.
-      document.dispatchEvent(new CustomEvent('mittely:fx-ready', { detail: { rate: currentRate() } }));
-    });
-  });
+  async function ensureRate() {
+    if (state.rateLoaded) return state.rate;
 
-  window.mittelyCurrency = {
-    refresh: refresh,
-    format: format,
-    currentRate: currentRate,
-    get rate() { return currentRate(); }
+    var cached = readRateCache();
+    if (cached) {
+      state.rate = cached;
+      state.rateLoaded = true;
+      return state.rate;
+    }
+
+    var live = await fetchLiveRate();
+    if (live) {
+      state.rate = live;
+      state.rateLoaded = true;
+      writeRateCache(live);
+      return state.rate;
+    }
+
+    var fb = await loadFallbackRate();
+    state.rate = fb;
+    state.rateLoaded = true;
+    writeRateCache(fb);
+    return state.rate;
+  }
+
+  /* ---------- Public API ---------- */
+
+  function getCurrent() { return state.current; }
+
+  function getRate() { return state.rate; }
+
+  function convert(usd) {
+    var n = Number(usd) || 0;
+    if (state.current === 'GHS') return n * state.rate;
+    return n;
+  }
+
+  /* Delegates to main.formatMoney if available, otherwise handles itself */
+  function formatMoney(usd) {
+    if (window.MITTELY.main && typeof window.MITTELY.main.formatMoney === 'function') {
+      return window.MITTELY.main.formatMoney(usd, state.current);
+    }
+    var n = convert(usd);
+    try {
+      return new Intl.NumberFormat(state.current === 'GHS' ? 'en-GH' : 'en-US', {
+        style: 'currency',
+        currency: state.current,
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2
+      }).format(n);
+    } catch (e) {
+      return (state.current === 'GHS' ? 'GH₵ ' : '$') + n.toFixed(2);
+    }
+  }
+
+  function setCurrency(code) {
+    if (code !== 'USD' && code !== 'GHS') return;
+    state.current = code;
+    writeCurrent(code);
+    renderSwitchers();
+    refreshPrices();
+    document.dispatchEvent(new CustomEvent('mittely:currency-changed', { detail: { currency: code } }));
+  }
+
+  function refreshPrices() {
+    document.querySelectorAll('[data-price-usd]').forEach(function (el) {
+      var usd = parseFloat(el.getAttribute('data-price-usd'));
+      if (isFinite(usd)) el.textContent = formatMoney(usd);
+    });
+  }
+
+  function renderSwitchers() {
+    document.querySelectorAll('.currency-switcher').forEach(function (wrap) {
+      wrap.querySelectorAll('.currency-btn').forEach(function (btn) {
+        var cur = btn.getAttribute('data-currency');
+        btn.classList.toggle('active', cur === state.current);
+      });
+    });
+  }
+
+  function bindSwitchers() {
+    document.querySelectorAll('.currency-switcher').forEach(function (wrap) {
+      if (wrap.dataset.bound === '1') return;
+      wrap.dataset.bound = '1';
+      wrap.querySelectorAll('.currency-btn').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          var cur = btn.getAttribute('data-currency');
+          if (cur) setCurrency(cur);
+        });
+      });
+    });
+  }
+
+  /* ---------- Init ---------- */
+
+  async function init() {
+    state.current = readCurrent();
+    renderSwitchers();
+    bindSwitchers();
+    document.addEventListener('mittely:currency-changed', function () {
+      renderSwitchers();
+    });
+    await ensureRate();
+    refreshPrices();
+  }
+
+  window.MITTELY.currency = {
+    getCurrent: getCurrent,
+    getRate: getRate,
+    convert: convert,
+    formatMoney: formatMoney,
+    setCurrency: setCurrency,
+    refreshPrices: refreshPrices,
+    ensureRate: ensureRate,
+    init: init
   };
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
+  }
 })();

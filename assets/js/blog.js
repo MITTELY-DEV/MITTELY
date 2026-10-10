@@ -1,417 +1,396 @@
-/* MITTELY — blog.js
-   Single-file blog: LISTING mode (no ?slug) and ARTICLE mode (?slug=...).
-   Handles fetch, tag filter, live search, pagination, views increment,
-   related posts, share, runtime canonical/OG rewrite, and JSON-LD injection. */
+/* ============================================
+   MITTELY — blog.js
+   Handles both blog.html modes:
+   - LISTING (?slug absent): grid, tag filter,
+     search, pagination, skeletons
+   - ARTICLE (?slug present): cover hero,
+     meta, sanitized content, share, related,
+     view increment, JSON-LD Article
+   ============================================ */
 (function () {
   'use strict';
 
-  var PAGE_SIZE = 6;
+  if (!window.MITTELY) window.MITTELY = {};
 
-  function sb() { return window.mittely && window.mittely.sb && window.mittely.sb(); }
-  function qs(sel, root) { return (root || document).querySelector(sel); }
-  function qsa(sel, root) { return Array.prototype.slice.call((root || document).querySelectorAll(sel)); }
-  function esc(s) { return window.escapeHtml ? window.escapeHtml(s) : String(s == null ? '' : s); }
-  function toast(m, k) { if (window.toast) window.toast(m, k); }
-  function param(name) { return new URL(window.location.href).searchParams.get(name); }
+  var PAGE_SIZE = 9;
+  var esc = function (s) { return window.MITTELY.main ? window.MITTELY.main.escapeHtml(s) : String(s || ''); };
+  var toast = function (m, t) { if (window.MITTELY.main) window.MITTELY.main.toast(m, t); };
 
-  /* ============ Listing ============ */
+  var state = {
+    page: 1,
+    search: '',
+    tag: ''
+  };
 
-  var listState = { page: 1, tag: '', search: '', total: 0 };
+  /* ---------- Sanitize article HTML ---------- */
 
-  function blogCardHtml(p) {
-    var url = 'blog.html?slug=' + encodeURIComponent(p.slug);
+  function sanitizeHtml(html) {
+    if (!html) return '';
+    /* Strip <script> and <style>, event handlers, and javascript: URLs. */
+    var out = String(html);
+    out = out.replace(/<\s*script[^>]*>[\s\S]*?<\s*\/\s*script\s*>/gi, '');
+    out = out.replace(/<\s*style[^>]*>[\s\S]*?<\s*\/\s*style\s*>/gi, '');
+    out = out.replace(/ on[a-z]+\s*=\s*"[^"]*"/gi, '');
+    out = out.replace(/ on[a-z]+\s*=\s*'[^']*'/gi, '');
+    out = out.replace(/javascript:/gi, '');
+    return out;
+  }
+
+  function blogCardHtml(post) {
+    var href = 'blog.html?slug=' + encodeURIComponent(post.slug || '');
+    var cover = post.cover_image || '';
+    var date = post.created_at ? new Date(post.created_at).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' }) : '';
+    var excerpt = post.excerpt || '';
     return '' +
-      '<article class="card">' +
+      '<article class="blog-card">' +
         '<div class="card-media">' +
-          (p.cover_image
-            ? '<img src="' + esc(p.cover_image) + '" alt="' + esc(p.title) + ' cover" loading="lazy" decoding="async" width="600" height="450">'
-            : '<div class="skeleton-block" aria-hidden="true"></div>') +
-          '<div class="card-scrim" aria-hidden="true"></div>' +
-          '<a href="' + url + '" class="card-save-pill"><i class="fa-solid fa-arrow-right" aria-hidden="true"></i> Read</a>' +
+          '<img src="' + esc(cover) + '" alt="' + esc(post.title) + '" loading="lazy" decoding="async">' +
+          '<div class="card-scrim"></div>' +
+          '<a href="' + href + '" class="card-save-pill"><i class="fa-solid fa-book-open"></i> Read article</a>' +
         '</div>' +
         '<div class="card-body">' +
-          '<h3 class="card-title"><a href="' + url + '">' + esc(p.title) + '</a></h3>' +
-          '<p class="muted" style="margin:0;font-size:.92em">' + esc(p.excerpt || '') + '</p>' +
+          '<a href="' + href + '" class="card-title">' + esc(post.title) + '</a>' +
+          '<p class="card-desc">' + esc(excerpt) + '</p>' +
+          '<div class="card-meta"><span class="card-rating">' + esc(date) + '</span>' +
+          '<span class="card-rating"><i class="fa-solid fa-eye"></i> ' + (post.views_count || 0) + '</span></div>' +
         '</div>' +
       '</article>';
   }
 
-  function buildListQuery() {
-    var client = sb();
-    if (!client) return null;
-    var q = client.from('blog_posts')
-      .select('id,title,slug,excerpt,cover_image,tags,author_name,created_at,views_count', { count: 'exact' })
-      .eq('status', 'published')
-      .order('created_at', { ascending: false });
-    if (listState.tag) q = q.ilike('tags', '%' + listState.tag + '%');
-    if (listState.search) q = q.or('title.ilike.%' + listState.search + '%,excerpt.ilike.%' + listState.search + '%');
-    var from = (listState.page - 1) * PAGE_SIZE;
-    var to = from + PAGE_SIZE - 1;
-    return q.range(from, to);
+  function skeletonGrid(n) {
+    var out = '';
+    for (var i = 0; i < (n || 6); i++) out += '<div class="skeleton-card"></div>';
+    return out;
   }
 
-  function renderList() {
+  /* ---------- LISTING MODE ---------- */
+
+  async function renderListing() {
     var grid = document.getElementById('blogGrid');
-    var empty = document.getElementById('blogEmpty');
-    var pagEl = document.getElementById('blogPagination');
-    if (!grid) return;
-    grid.innerHTML = '';
-    for (var i = 0; i < PAGE_SIZE; i++) {
-      var s = document.createElement('div');
-      s.className = 'card skeleton-card';
-      s.setAttribute('aria-hidden', 'true');
-      grid.appendChild(s);
-    }
-    var q = buildListQuery();
-    if (!q) return;
-    q.then(function (res) {
-      var rows = (res && res.data) || [];
-      listState.total = (res && res.count) || rows.length;
-      if (!rows.length) {
+    var emptyEl = document.getElementById('blogEmpty');
+    var pag = document.getElementById('blogPagination');
+    if (!grid || !window.MITTELY.supabase) return;
+
+    grid.innerHTML = skeletonGrid(3);
+    if (emptyEl) emptyEl.style.display = 'none';
+
+    try {
+      var q = window.MITTELY.supabase
+        .from('blog_posts')
+        .select('id, title, slug, excerpt, cover_image, tags, views_count, created_at, status', { count: 'exact' })
+        .eq('status', 'published');
+
+      if (state.search) q = q.ilike('title', '%' + state.search + '%');
+      if (state.tag) q = q.ilike('tags', '%' + state.tag + '%');
+      q = q.order('created_at', { ascending: false });
+
+      var from = (state.page - 1) * PAGE_SIZE;
+      q = q.range(from, from + PAGE_SIZE - 1);
+      var res = await q;
+      var data = (res && res.data) || [];
+      var count = (res && res.count) || 0;
+
+      if (!data.length) {
         grid.innerHTML = '';
-        if (empty) empty.hidden = false;
-        if (pagEl) pagEl.innerHTML = '';
+        if (emptyEl) emptyEl.style.display = 'flex';
+        if (pag) pag.innerHTML = '';
         return;
       }
-      grid.innerHTML = rows.map(blogCardHtml).join('');
-      if (empty) empty.hidden = true;
-      renderPagination(pagEl);
-      injectListingJsonLd(rows);
-      injectBreadcrumbs();
-    }).catch(function () {
+
+      grid.innerHTML = data.map(blogCardHtml).join('');
+      renderPagination(count);
+      injectListingJsonLd(data);
+    } catch (e) {
       grid.innerHTML = '';
-      if (empty) empty.hidden = false;
-    });
+      if (emptyEl) emptyEl.style.display = 'flex';
+    }
   }
 
-  function renderPagination(container) {
-    if (!container) return;
-    var pages = Math.max(1, Math.ceil(listState.total / PAGE_SIZE));
-    if (pages <= 1) { container.innerHTML = ''; return; }
+  function renderPagination(total) {
+    var pag = document.getElementById('blogPagination');
+    if (!pag) return;
+    var pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+    if (pages <= 1) { pag.innerHTML = ''; return; }
     var html = '';
     for (var i = 1; i <= pages; i++) {
-      html += '<button type="button" class="' + (i === listState.page ? 'is-active' : '') + '" data-page="' + i + '">' + i + '</button>';
+      html += '<button class="chip' + (i === state.page ? ' active' : '') + '" data-page="' + i + '">' + i + '</button>';
     }
-    container.innerHTML = html;
-    qsa('button', container).forEach(function (b) {
-      b.addEventListener('click', function () {
-        listState.page = Number(b.getAttribute('data-page'));
-        renderList();
-        window.scrollTo({ top: container.getBoundingClientRect().top + window.scrollY - 120, behavior: 'smooth' });
-      });
+    pag.innerHTML = html;
+  }
+
+  function bindListingPagination() {
+    var pag = document.getElementById('blogPagination');
+    if (!pag || pag.dataset.bound === '1') return;
+    pag.dataset.bound = '1';
+    pag.addEventListener('click', function (e) {
+      var btn = e.target.closest('[data-page]');
+      if (!btn) return;
+      var p = parseInt(btn.getAttribute('data-page'), 10);
+      if (!p || p === state.page) return;
+      state.page = p;
+      renderListing();
+      window.scrollTo({ top: 0, behavior: 'smooth' });
     });
   }
 
-  function loadTags() {
-    var chips = document.getElementById('blogTags');
-    if (!chips) return;
-    var client = sb();
-    if (!client) return;
-    client.from('blog_posts').select('tags').eq('status', 'published')
-      .then(function (res) {
-        var rows = (res && res.data) || [];
-        var set = {};
-        rows.forEach(function (r) {
-          String(r.tags || '').split(',').forEach(function (t) {
-            var tag = t.trim();
-            if (tag) set[tag] = true;
-          });
-        });
-        var tags = Object.keys(set).sort();
-        var html = '<button class="chip is-active" data-tag="">All</button>' +
-          tags.map(function (t) { return '<button class="chip" data-tag="' + esc(t) + '">' + esc(t) + '</button>'; }).join('');
-        chips.innerHTML = html;
-        qsa('button', chips).forEach(function (b) {
-          b.addEventListener('click', function () {
-            qsa('button', chips).forEach(function (x) { x.classList.remove('is-active'); });
-            b.classList.add('is-active');
-            listState.tag = b.getAttribute('data-tag');
-            listState.page = 1;
-            renderList();
-          });
-        });
-      });
-  }
-
-  /* ============ Article ============ */
-
-  function initArticle(slug) {
-    var client = sb();
-    if (!client) { showArticleNotFound(); return; }
-    client.from('blog_posts')
-      .select('*')
-      .eq('slug', slug)
-      .eq('status', 'published')
-      .maybeSingle()
-      .then(function (res) {
-        if (res.error || !res.data) { showArticleNotFound(); return; }
-        renderArticle(res.data);
-        client.rpc('increment_blog_views', { p_id: res.data.id }).then(function () {});
-        loadRelated(res.data);
-      })
-      .catch(function () { showArticleNotFound(); });
-  }
-
-  function renderArticle(p) {
-    // Hide listing view, show article.
-    var listingHead = document.getElementById('blogListing');
-    var listing = document.getElementById('blogListingSection');
-    var article = document.getElementById('articleView');
-    if (listingHead) listingHead.hidden = true;
-    if (listing) listing.hidden = true;
-    if (article) article.hidden = false;
-
-    document.title = (p.meta_title || p.title) + ' | MITTELY';
-    var md = document.querySelector('meta[name="description"]');
-    if (md) md.setAttribute('content', (p.meta_description || p.excerpt || p.title).slice(0, 158));
-    var link = document.querySelector('link[rel="canonical"]');
-    if (link) link.setAttribute('href', 'https://mittely.com/blog.html?slug=' + encodeURIComponent(p.slug));
-    var robots = document.querySelector('meta[name="robots"]');
-    if (robots) robots.setAttribute('content', 'index, follow');
-
-    var ogTitle = document.querySelector('meta[property="og:title"]');
-    if (ogTitle) ogTitle.setAttribute('content', p.meta_title || p.title);
-    var ogDesc = document.querySelector('meta[property="og:description"]');
-    if (ogDesc) ogDesc.setAttribute('content', p.meta_description || p.excerpt || p.title);
-    var ogUrl = document.querySelector('meta[property="og:url"]');
-    if (ogUrl) ogUrl.setAttribute('content', 'https://mittely.com/blog.html?slug=' + encodeURIComponent(p.slug));
-    var ogImg = document.querySelector('meta[property="og:image"]');
-    if (ogImg && p.cover_image) ogImg.setAttribute('content', p.cover_image);
-    var twTitle = document.querySelector('meta[name="twitter:title"]');
-    if (twTitle) twTitle.setAttribute('content', p.meta_title || p.title);
-    var twDesc = document.querySelector('meta[name="twitter:description"]');
-    if (twDesc) twDesc.setAttribute('content', p.meta_description || p.excerpt || p.title);
-    var twImg = document.querySelector('meta[name="twitter:image"]');
-    if (twImg && p.cover_image) twImg.setAttribute('content', p.cover_image);
-
-    var cover = document.getElementById('articleCover');
-    if (cover) {
-      cover.src = p.cover_image || 'https://images.unsplash.com/photo-1522542550221-31fd19575a2d?w=1200&q=80';
-      cover.alt = p.title + ' cover image';
-    }
-    document.getElementById('articleTitle').textContent = p.title;
-    var crumb = document.getElementById('articleCrumb');
-    if (crumb) crumb.textContent = p.title;
-
-    var tagWrap = document.getElementById('articleTags');
-    if (tagWrap) {
-      var tags = String(p.tags || '').split(',').map(function (t) { return t.trim(); }).filter(Boolean);
-      tagWrap.innerHTML = tags.map(function (t) {
-        return '<a class="chip" href="blog.html?tag=' + encodeURIComponent(t) + '">' + esc(t) + '</a>';
-      }).join('');
-    }
-
-    var author = p.author_name || 'MITTELY';
-    var authorAvatar = document.getElementById('articleAuthorAvatar');
-    if (authorAvatar) {
-      authorAvatar.src = 'https://ui-avatars.com/api/?name=' + encodeURIComponent(author) + '&background=C6F13C&color=1A1F1A';
-      authorAvatar.alt = author;
-    }
-    var authorName = document.getElementById('articleAuthorName');
-    if (authorName) authorName.textContent = author;
-
-    var date = document.getElementById('articleDate');
-    var publishedAt = p.created_at ? new Date(p.created_at) : new Date();
-    if (date) {
-      date.textContent = publishedAt.toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' });
-      date.setAttribute('datetime', publishedAt.toISOString());
-    }
-
-    var words = String(p.content || '').split(/\s+/).length;
-    var reading = Math.max(1, Math.round(words / 220));
-    var rt = document.getElementById('articleReadingTime');
-    if (rt) rt.textContent = reading + ' min read';
-
-    var views = document.getElementById('articleViews');
-    if (views) views.textContent = String(Number(p.views_count || 0) + 1);
-
-    var content = document.getElementById('articleContent');
-    if (content) {
-      var sanitized = window.mittelyProducts && window.mittelyProducts.sanitizeHtml
-        ? window.mittelyProducts.sanitizeHtml(p.content || '')
-        : '';
-      content.innerHTML = sanitized || '<p>' + esc(p.excerpt || '') + '</p>';
-    }
-
-    // Share row
-    var shareUrl = 'https://mittely.com/blog.html?slug=' + encodeURIComponent(p.slug);
-    var shareTitle = p.meta_title || p.title;
-    var shareX = document.getElementById('shareX');
-    var shareLi = document.getElementById('shareLinkedIn');
-    var shareCopy = document.getElementById('shareCopy');
-    if (shareX) shareX.href = 'https://twitter.com/intent/tweet?url=' + encodeURIComponent(shareUrl) + '&text=' + encodeURIComponent(shareTitle);
-    if (shareLi) shareLi.href = 'https://www.linkedin.com/sharing/share-offsite/?url=' + encodeURIComponent(shareUrl);
-    if (shareCopy) {
-      shareCopy.addEventListener('click', function () {
-        if (navigator.clipboard && navigator.clipboard.writeText) {
-          navigator.clipboard.writeText(shareUrl).then(function () { toast('Link copied.', 'success'); });
-        } else {
-          toast('Copy failed.', 'error');
-        }
-      });
-    }
-
-    injectArticleJsonLd(p);
-    injectArticleBreadcrumbs(p);
-  }
-
-  function loadRelated(p) {
-    var client = sb();
-    var section = document.getElementById('relatedSection');
-    var grid = document.getElementById('relatedPosts');
-    if (!client || !grid) return;
-    var firstTag = String(p.tags || '').split(',')[0].trim();
-    var q = client.from('blog_posts')
-      .select('id,title,slug,excerpt,cover_image,tags,created_at')
-      .eq('status', 'published')
-      .neq('id', p.id)
-      .order('created_at', { ascending: false })
-      .limit(3);
-    if (firstTag) q = q.ilike('tags', '%' + firstTag + '%');
-    q.then(function (res) {
+  async function loadTagChips() {
+    var wrap = document.getElementById('blogTagFilter');
+    if (!wrap || !window.MITTELY.supabase) return;
+    try {
+      var res = await window.MITTELY.supabase
+        .from('blog_posts').select('tags').eq('status', 'published');
       var rows = (res && res.data) || [];
-      if (!rows.length) return;
-      grid.innerHTML = rows.map(blogCardHtml).join('');
-      if (section) section.hidden = false;
-    });
+      var set = {};
+      rows.forEach(function (r) {
+        if (!r.tags) return;
+        String(r.tags).split(',').forEach(function (t) {
+          var v = t.trim();
+          if (v) set[v.toLowerCase()] = v;
+        });
+      });
+      var keys = Object.keys(set);
+      var html = '<button class="chip active" data-tag="">All</button>';
+      keys.forEach(function (k) {
+        html += '<button class="chip" data-tag="' + esc(set[k]) + '">' + esc(set[k]) + '</button>';
+      });
+      wrap.innerHTML = html;
+    } catch (e) { /* silent */ }
   }
 
-  function showArticleNotFound() {
-    var listingHead = document.getElementById('blogListing');
-    var listing = document.getElementById('blogListingSection');
-    var article = document.getElementById('articleView');
-    var notFound = document.getElementById('articleNotFound');
-    if (listingHead) listingHead.hidden = true;
-    if (listing) listing.hidden = true;
-    if (article) article.hidden = true;
-    if (notFound) notFound.hidden = false;
-    var robots = document.querySelector('meta[name="robots"]');
-    if (robots) robots.setAttribute('content', 'noindex, nofollow');
-    document.title = 'Article not found — MITTELY';
-  }
-
-  /* ============ JSON-LD ============ */
-
-  function injectListingJsonLd(rows) {
-    var el = document.getElementById('mittelyBlogListingJsonLd');
-    if (!el) {
-      el = document.createElement('script');
-      el.type = 'application/ld+json';
-      el.id = 'mittelyBlogListingJsonLd';
-      document.head.appendChild(el);
-    }
-    var data = {
-      "@context": "https://schema.org",
-      "@type": "ItemList",
-      "itemListElement": rows.map(function (p, i) {
+  function injectListingJsonLd(items) {
+    var script = document.getElementById('blogJsonLd');
+    if (!script) return;
+    script.textContent = JSON.stringify({
+      '@context': 'https://schema.org',
+      '@type': 'ItemList',
+      itemListElement: items.map(function (p, i) {
         return {
-          "@type": "ListItem",
-          "position": i + 1,
-          "url": "https://mittely.com/blog.html?slug=" + encodeURIComponent(p.slug),
-          "name": p.title
+          '@type': 'ListItem',
+          position: i + 1,
+          url: 'https://mittely.com/blog.html?slug=' + encodeURIComponent(p.slug || ''),
+          name: p.title
         };
       })
-    };
-    el.textContent = JSON.stringify(data);
-    var articleEl = document.getElementById('mittelyBlogArticleJsonLd');
-    if (articleEl) articleEl.remove();
-  }
-
-  function injectArticleJsonLd(p) {
-    var el = document.getElementById('mittelyBlogArticleJsonLd');
-    if (!el) {
-      el = document.createElement('script');
-      el.type = 'application/ld+json';
-      el.id = 'mittelyBlogArticleJsonLd';
-      document.head.appendChild(el);
-    }
-    var data = {
-      "@context": "https://schema.org",
-      "@type": "Article",
-      "headline": p.meta_title || p.title,
-      "image": [p.cover_image || 'https://mittely.com/assets/img/og-default.jpg'],
-      "datePublished": p.created_at || new Date().toISOString(),
-      "dateModified": p.updated_at || p.created_at || new Date().toISOString(),
-      "author": {
-        "@type": "Person",
-        "name": p.author_name || 'MITTELY'
-      },
-      "publisher": {
-        "@type": "Organization",
-        "name": "MITTELY",
-        "logo": {
-          "@type": "ImageObject",
-          "url": "https://mittely.com/assets/img/logo.png"
-        }
-      },
-      "mainEntityOfPage": "https://mittely.com/blog.html?slug=" + encodeURIComponent(p.slug)
-    };
-    el.textContent = JSON.stringify(data);
-    var listingEl = document.getElementById('mittelyBlogListingJsonLd');
-    if (listingEl) listingEl.remove();
-  }
-
-  function injectBreadcrumbs() {
-    var el = document.getElementById('mittelyBlogBreadcrumbJsonLd');
-    if (!el) {
-      el = document.createElement('script');
-      el.type = 'application/ld+json';
-      el.id = 'mittelyBlogBreadcrumbJsonLd';
-      document.head.appendChild(el);
-    }
-    el.textContent = JSON.stringify({
-      "@context": "https://schema.org",
-      "@type": "BreadcrumbList",
-      "itemListElement": [
-        { "@type": "ListItem", "position": 1, "name": "Home", "item": "https://mittely.com/" },
-        { "@type": "ListItem", "position": 2, "name": "Blog", "item": "https://mittely.com/blog.html" }
-      ]
     });
   }
 
-  function injectArticleBreadcrumbs(p) {
-    var el = document.getElementById('mittelyBlogBreadcrumbJsonLd');
-    if (!el) {
-      el = document.createElement('script');
-      el.type = 'application/ld+json';
-      el.id = 'mittelyBlogBreadcrumbJsonLd';
-      document.head.appendChild(el);
+  function initListing() {
+    var listing = document.getElementById('blogListingMode');
+    var article = document.getElementById('blogArticleMode');
+    var notFound = document.getElementById('blogNotFound');
+    if (listing) listing.style.display = 'block';
+    if (article) article.style.display = 'none';
+    if (notFound) notFound.style.display = 'none';
+
+    var search = document.getElementById('blogSearch');
+    var tagsWrap = document.getElementById('blogTagFilter');
+
+    if (search) {
+      var deb = window.MITTELY.main.debounce(function () {
+        state.search = search.value.trim();
+        state.page = 1;
+        renderListing();
+      }, 250);
+      search.addEventListener('input', deb);
     }
-    el.textContent = JSON.stringify({
-      "@context": "https://schema.org",
-      "@type": "BreadcrumbList",
-      "itemListElement": [
-        { "@type": "ListItem", "position": 1, "name": "Home", "item": "https://mittely.com/" },
-        { "@type": "ListItem", "position": 2, "name": "Blog", "item": "https://mittely.com/blog.html" },
-        { "@type": "ListItem", "position": 3, "name": p.title, "item": "https://mittely.com/blog.html?slug=" + encodeURIComponent(p.slug) }
-      ]
-    });
+
+    if (tagsWrap) {
+      tagsWrap.addEventListener('click', function (e) {
+        var chip = e.target.closest('.chip');
+        if (!chip) return;
+        tagsWrap.querySelectorAll('.chip').forEach(function (c) { c.classList.remove('active'); });
+        chip.classList.add('active');
+        state.tag = chip.getAttribute('data-tag') || '';
+        state.page = 1;
+        renderListing();
+      });
+    }
+
+    bindListingPagination();
+    loadTagChips();
+    renderListing();
   }
 
-  /* ============ Entry ============ */
+  /* ---------- ARTICLE MODE ---------- */
 
-  function onReady(fn) {
-    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', fn);
-    else fn();
-  }
+  async function renderArticle(slug) {
+    var listing = document.getElementById('blogListingMode');
+    var article = document.getElementById('blogArticleMode');
+    var notFound = document.getElementById('blogNotFound');
+    if (listing) listing.style.display = 'none';
 
-  onReady(function () {
-    var slug = param('slug');
-    if (slug) {
-      initArticle(slug);
-    } else {
-      var tag = param('tag');
-      if (tag) listState.tag = tag;
-      loadTags();
-      var search = document.getElementById('blogSearch');
-      if (search) {
-        search.addEventListener('input', window.debounce(function () {
-          listState.search = search.value.trim();
-          listState.page = 1;
-          renderList();
-        }, 260));
+    if (!slug || !window.MITTELY.supabase) {
+      if (notFound) notFound.style.display = 'block';
+      return;
+    }
+
+    try {
+      var res = await window.MITTELY.supabase
+        .from('blog_posts').select('*').eq('slug', slug).eq('status', 'published').maybeSingle();
+      var post = res && res.data;
+      if (!post) {
+        if (notFound) notFound.style.display = 'block';
+        document.title = 'Article not found — MITTELY';
+        return;
       }
-      renderList();
+
+      if (article) article.style.display = 'block';
+
+      /* Title + meta */
+      document.title = (post.meta_title || post.title) + ' — MITTELY';
+      var descMeta = document.querySelector('meta[name="description"]');
+      if (descMeta && (post.meta_description || post.excerpt)) {
+        descMeta.setAttribute('content', post.meta_description || post.excerpt);
+      }
+      var canonical = document.querySelector('link[rel="canonical"]');
+      if (canonical) canonical.href = 'https://mittely.com/blog.html?slug=' + encodeURIComponent(post.slug);
+      var ogUrl = document.querySelector('meta[property="og:url"]');
+      if (ogUrl) ogUrl.setAttribute('content', 'https://mittely.com/blog.html?slug=' + encodeURIComponent(post.slug));
+      var ogType = document.querySelector('meta[property="og:type"]');
+      if (ogType) ogType.setAttribute('content', 'article');
+      var ogTitle = document.querySelector('meta[property="og:title"]');
+      if (ogTitle) ogTitle.setAttribute('content', post.meta_title || post.title);
+      var ogDesc = document.querySelector('meta[property="og:description"]');
+      if (ogDesc) ogDesc.setAttribute('content', post.meta_description || post.excerpt || '');
+
+      /* Hero */
+      var cover = document.getElementById('articleCover');
+      if (cover) {
+        cover.src = post.cover_image || '';
+        cover.alt = post.title || '';
+      }
+      var titleEl = document.getElementById('articleTitle');
+      if (titleEl) titleEl.textContent = post.title || '';
+
+      var metaEl = document.getElementById('articleMeta');
+      if (metaEl) {
+        var date = post.created_at ? new Date(post.created_at).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }) : '';
+        metaEl.innerHTML =
+          '<span><i class="fa-solid fa-user"></i> ' + esc(post.author_name || 'MITTELY') + '</span>' +
+          '<span><i class="fa-solid fa-calendar"></i> ' + esc(date) + '</span>' +
+          '<span><i class="fa-solid fa-clock"></i> ' + Math.max(1, Math.round((post.content || '').split(/\s+/).length / 220)) + ' min read</span>' +
+          '<span><i class="fa-solid fa-eye"></i> ' + (post.views_count || 0) + ' views</span>';
+      }
+
+      var contentEl = document.getElementById('articleContent');
+      if (contentEl) contentEl.innerHTML = sanitizeHtml(post.content || '');
+
+      var tagsEl = document.getElementById('articleTags');
+      if (tagsEl) {
+        var tags = post.tags ? String(post.tags).split(',').map(function (t) { return t.trim(); }).filter(Boolean) : [];
+        tagsEl.innerHTML = tags.map(function (t) { return '<span class="chip">' + esc(t) + '</span>'; }).join('');
+      }
+
+      var bcCurrent = document.getElementById('articleBreadcrumbCurrent');
+      if (bcCurrent) bcCurrent.textContent = post.title || 'Article';
+
+      /* Share row */
+      var shareUrl = encodeURIComponent('https://mittely.com/blog.html?slug=' + post.slug);
+      var shareText = encodeURIComponent(post.title || '');
+      var shareX = document.getElementById('shareX');
+      var shareLinkedIn = document.getElementById('shareLinkedIn');
+      var shareEmail = document.getElementById('shareEmail');
+      var shareCopy = document.getElementById('shareCopy');
+      var settingsRes = await window.MITTELY.supabase
+        .from('settings').select('skey, svalue').in('skey', ['x_url', 'linkedin_url']);
+      var settingsMap = {};
+      ((settingsRes && settingsRes.data) || []).forEach(function (r) { settingsMap[r.skey] = r.svalue; });
+      if (shareX) shareX.href = 'https://twitter.com/intent/tweet?text=' + shareText + '&url=' + shareUrl;
+      if (shareLinkedIn) shareLinkedIn.href = 'https://www.linkedin.com/sharing/share-offsite/?url=' + shareUrl;
+      if (shareEmail) shareEmail.href = 'mailto:?subject=' + shareText + '&body=' + shareUrl;
+      if (shareCopy) {
+        shareCopy.addEventListener('click', function () {
+          var url = 'https://mittely.com/blog.html?slug=' + post.slug;
+          if (navigator.clipboard) {
+            navigator.clipboard.writeText(url).then(function () { toast('Link copied', 'success'); })
+              .catch(function () { toast('Copy failed', 'error'); });
+          } else {
+            toast('Copy not supported', 'error');
+          }
+        });
+      }
+
+      /* View increment */
+      try { await window.MITTELY.supabase.rpc('increment_blog_views', { post_id: post.id }); } catch (e) { /* silent */ }
+
+      /* JSON-LD Article + Breadcrumb */
+      injectArticleJsonLd(post);
+
+      /* Related posts */
+      loadRelatedPosts(post);
+    } catch (e) {
+      if (notFound) notFound.style.display = 'block';
     }
-  });
+  }
+
+  function injectArticleJsonLd(post) {
+    var script = document.getElementById('blogJsonLd');
+    if (!script) return;
+    var url = 'https://mittely.com/blog.html?slug=' + encodeURIComponent(post.slug || '');
+    var data = [
+      {
+        '@context': 'https://schema.org',
+        '@type': 'Article',
+        headline: post.title,
+        description: post.excerpt || post.meta_description || '',
+        image: post.cover_image || '',
+        datePublished: post.created_at,
+        dateModified: post.updated_at || post.created_at,
+        author: { '@type': 'Person', name: post.author_name || 'MITTELY' },
+        publisher: { '@type': 'Organization', name: 'MITTELY' },
+        mainEntityOfPage: { '@type': 'WebPage', '@id': url }
+      },
+      {
+        '@context': 'https://schema.org',
+        '@type': 'BreadcrumbList',
+        itemListElement: [
+          { '@type': 'ListItem', position: 1, name: 'Home', item: 'https://mittely.com/' },
+          { '@type': 'ListItem', position: 2, name: 'Blog', item: 'https://mittely.com/blog.html' },
+          { '@type': 'ListItem', position: 3, name: post.title, item: url }
+        ]
+      }
+    ];
+    script.textContent = JSON.stringify(data);
+  }
+
+  async function loadRelatedPosts(post) {
+    var section = document.getElementById('relatedPostsSection');
+    var grid = document.getElementById('relatedPostsGrid');
+    if (!section || !grid) return;
+    try {
+      var q = window.MITTELY.supabase
+        .from('blog_posts')
+        .select('id, title, slug, excerpt, cover_image, views_count, created_at')
+        .eq('status', 'published')
+        .neq('id', post.id)
+        .limit(3);
+      var res = await q;
+      var data = (res && res.data) || [];
+      if (!data.length) { section.style.display = 'none'; return; }
+      section.style.display = 'block';
+      grid.innerHTML = data.map(blogCardHtml).join('');
+    } catch (e) {
+      section.style.display = 'none';
+    }
+  }
+
+  /* ---------- Init ---------- */
+
+  function init() {
+    var slug = new URL(location.href).searchParams.get('slug');
+    if (slug) renderArticle(slug);
+    else initListing();
+  }
+
+  window.MITTELY.blog = {
+    init: init,
+    sanitizeHtml: sanitizeHtml,
+    blogCardHtml: blogCardHtml
+  };
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
+  }
 })();

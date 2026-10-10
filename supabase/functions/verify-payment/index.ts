@@ -1,216 +1,272 @@
-// ============================================================================
-// MITTELY — Edge Function: verify-payment
-// POST { reference, items[], currency, coupon_code? }
-// Verifies a Paystack charge server-side, recomputes the total in USD,
-// inserts the order, increments counters, credits designer wallets.
-// ============================================================================
+// ============================================
+// MITTELY — verify-payment Edge Function
+// POST { reference, items, currency, coupon_code? }
+// Verifies with Paystack, recomputes USD total
+// server-side, validates coupon, inserts order +
+// order_items, increments counters, logs activity.
+// ============================================
 
-import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
+import { serve } from "https://deno.land/std@0.203.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const PAYSTACK_SECRET_KEY = Deno.env.get("PAYSTACK_SECRET_KEY") ?? "";
-const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
-const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
-const ALLOWED_ORIGINS = (Deno.env.get("ALLOWED_ORIGINS") ?? "http://localhost:5173,http://localhost:3000").split(",");
+const ALLOWED_ORIGINS = [
+  "https://mittely.com",
+  "https://www.mittely.com",
+  "http://localhost:3000",
+  "http://localhost:5173",
+  "http://127.0.0.1:5500",
+];
 
-function cors(req: Request): Record<string, string> {
-  const origin = req.headers.get("origin") ?? "";
-  const allow = ALLOWED_ORIGINS.includes(origin) ? origin : ALLOWED_ORIGINS[0];
+function corsHeaders(origin: string | null) {
+  const allow = origin && ALLOWED_ORIGINS.includes(origin) ? origin : ALLOWED_ORIGINS[0];
   return {
     "Access-Control-Allow-Origin": allow,
-    "Vary": "Origin",
     "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
     "Access-Control-Allow-Methods": "POST, OPTIONS",
+    "Access-Control-Max-Age": "86400",
   };
 }
 
-function json(body: unknown, status = 200, req?: Request): Response {
+function json(body: unknown, status = 200, origin: string | null = null) {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { "content-type": "application/json", ...(req ? cors(req) : {}) },
+    headers: { "Content-Type": "application/json", ...corsHeaders(origin) },
   });
 }
 
-// Fetch live USD -> GHS with fallback to settings.
-async function getFxRate(sb: ReturnType<typeof createClient>): Promise<number> {
-  try {
-    const r = await fetch("https://open.er-api.com/v6/latest/USD", { cache: "no-store" });
-    const data = await r.json();
-    const rate = Number(data?.rates?.GHS);
-    if (isFinite(rate) && rate > 0) return rate;
-  } catch (_) { /* fall through */ }
-  try {
-    const { data } = await sb.from("settings").select("svalue").eq("skey", "fx_fallback_rate").maybeSingle();
-    const fb = Number(data?.svalue);
-    if (isFinite(fb) && fb > 0) return fb;
-  } catch (_) { /* fall through */ }
-  return 15.5;
+interface ItemInput {
+  product_id: string;
+  license?: string;
+  qty?: number;
 }
 
-serve(async (req: Request) => {
-  if (req.method === "OPTIONS") return new Response("ok", { headers: cors(req) });
-  if (req.method !== "POST") return json({ ok: false, reason: "method_not_allowed" }, 405, req);
-
-  if (!PAYSTACK_SECRET_KEY || !SUPABASE_URL || !SERVICE_ROLE) {
-    return json({ ok: false, reason: "server_not_configured" }, 500, req);
+serve(async (req) => {
+  const origin = req.headers.get("origin");
+  if (req.method === "OPTIONS") {
+    return new Response("ok", { headers: corsHeaders(origin) });
+  }
+  if (req.method !== "POST") {
+    return json({ ok: false, reason: "method_not_allowed" }, 405, origin);
   }
 
-  let body: { reference?: string; items?: Array<{ slug: string; license?: string; qty?: number }>; currency?: string; coupon_code?: string | null };
-  try { body = await req.json(); } catch { return json({ ok: false, reason: "bad_json" }, 400, req); }
+  const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
+  const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+  const PAYSTACK_SECRET_KEY = Deno.env.get("PAYSTACK_SECRET_KEY");
 
-  const { reference, items, currency, coupon_code } = body;
-  if (!reference || !Array.isArray(items) || !items.length) return json({ ok: false, reason: "missing_fields" }, 400, req);
+  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY || !PAYSTACK_SECRET_KEY) {
+    return json({ ok: false, reason: "server_misconfigured" }, 500, origin);
+  }
 
-  const sb = createClient(SUPABASE_URL, SERVICE_ROLE, { auth: { persistSession: false } });
+  let payload: { reference?: string; items?: ItemInput[]; currency?: string; coupon_code?: string | null };
+  try {
+    payload = await req.json();
+  } catch {
+    return json({ ok: false, reason: "invalid_json" }, 400, origin);
+  }
 
-  // Reject duplicates early.
-  const existing = await sb.from("orders").select("id").eq("paystack_reference", reference).maybeSingle();
-  if (existing.data) return json({ ok: true, order_id: existing.data.id, duplicate: true }, 200, req);
+  const reference = (payload.reference || "").trim();
+  const items = Array.isArray(payload.items) ? payload.items : [];
+  const currency = payload.currency === "GHS" ? "GHS" : "USD";
+  const couponCode = payload.coupon_code ? String(payload.coupon_code).toUpperCase().trim() : null;
 
-  // 1) Verify with Paystack.
-  const payRes = await fetch(`https://api.paystack.co/transaction/verify/${encodeURIComponent(reference)}`, {
-    headers: { Authorization: `Bearer ${PAYSTACK_SECRET_KEY}` },
+  if (!reference) return json({ ok: false, reason: "missing_reference" }, 400, origin);
+  if (!items.length) return json({ ok: false, reason: "empty_cart" }, 400, origin);
+
+  // -------- 1. Verify with Paystack --------
+  let paystackData: any;
+  try {
+    const psRes = await fetch(`https://api.paystack.co/transaction/verify/${encodeURIComponent(reference)}`, {
+      headers: { Authorization: `Bearer ${PAYSTACK_SECRET_KEY}` },
+    });
+    paystackData = await psRes.json();
+  } catch {
+    return json({ ok: false, reason: "paystack_unreachable" }, 502, origin);
+  }
+  if (!paystackData || paystackData.status !== true || !paystackData.data) {
+    return json({ ok: false, reason: "paystack_verification_failed" }, 400, origin);
+  }
+  const tx = paystackData.data;
+  if (tx.status !== "success") {
+    return json({ ok: false, reason: "transaction_not_successful", status: tx.status }, 400, origin);
+  }
+  const paystackAmount = Number(tx.amount) || 0; // smallest unit
+  const paystackCurrency = (tx.currency || "").toUpperCase();
+
+  const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+
+  // -------- 2. Recompute subtotal in USD --------
+  const productIds = items.map((i) => i.product_id).filter(Boolean);
+  const { data: products, error: prodErr } = await supabase
+    .from("products")
+    .select("id, price, sale_price, is_free, download_path")
+    .in("id", productIds);
+  if (prodErr || !products || !products.length) {
+    return json({ ok: false, reason: "products_not_found" }, 400, origin);
+  }
+
+  const { data: licenses } = await supabase.from("licenses").select("name, price_multiplier");
+  const licenseMultipliers: Record<string, number> = {};
+  (licenses || []).forEach((l: any) => {
+    licenseMultipliers[String(l.name).toLowerCase()] = Number(l.price_multiplier) || 1;
   });
-  const payJson = await payRes.json();
-  if (!payJson?.status || payJson?.data?.status !== "success") {
-    return json({ ok: false, reason: "paystack_not_successful" }, 200, req);
-  }
-  const paystackAmount = Number(payJson.data.amount);       // smallest unit (cents/pesewas)
-  const paystackCurrency = String(payJson.data.currency || "").toUpperCase();
-  const paystackEmail = String(payJson.data.customer?.email || "").toLowerCase();
-  if (!paystackEmail) return json({ ok: false, reason: "no_customer_email" }, 200, req);
+  if (!licenseMultipliers["standard"]) licenseMultipliers["standard"] = 1;
+  if (!licenseMultipliers["extended"]) licenseMultipliers["extended"] = 3;
 
-  // 2) Recompute expected USD total server-side.
-  const slugs = items.map((i) => i.slug);
-  const { data: products, error: prodErr } = await sb.from("products")
-    .select("id,title,slug,price,sale_price,is_free,is_published,designer_email,download_path")
-    .in("slug", slugs);
-  if (prodErr || !products) return json({ ok: false, reason: "products_lookup_failed" }, 200, req);
-
-  const { data: licenses } = await sb.from("licenses").select("name,price_multiplier");
-  const multMap: Record<string, number> = { standard: 1, extended: 3 };
-  (licenses ?? []).forEach((l) => { multMap[String(l.name).toLowerCase()] = Number(l.price_multiplier) || 1; });
-
-  const bySlug: Record<string, any> = {};
-  products.forEach((p) => { bySlug[p.slug] = p; });
+  const productMap: Record<string, any> = {};
+  products.forEach((p: any) => { productMap[p.id] = p; });
 
   let subtotalUsd = 0;
-  const orderItems: Array<{ product_id: string; price_paid: number; license: string; title: string; designer_email: string | null }> = [];
+  const lineItems: Array<{ product_id: string; price_paid: number; license: string }> = [];
 
-  for (const raw of items) {
-    const p = bySlug[raw.slug];
-    if (!p || p.is_published === false) return json({ ok: false, reason: `unavailable:${raw.slug}` }, 200, req);
-    const qty = Math.max(1, Math.min(99, Number(raw.qty) || 1));
-    const licKey = raw.license === "extended" ? "extended" : "standard";
-    const mult = multMap[licKey] ?? (licKey === "extended" ? 3 : 1);
-    const base = (p.sale_price != null && Number(p.sale_price) > 0) ? Number(p.sale_price) : Number(p.price);
-    const unit = (p.is_free ? 0 : base) * mult;
-    subtotalUsd += unit * qty;
-    orderItems.push({
-      product_id: p.id,
-      price_paid: unit,
-      license: licKey,
-      title: p.title,
-      designer_email: p.designer_email ? String(p.designer_email).toLowerCase() : null,
-    });
+  for (const it of items) {
+    const p = productMap[it.product_id];
+    if (!p) return json({ ok: false, reason: "unknown_product", product_id: it.product_id }, 400, origin);
+    const licenseKey = (it.license || "standard").toLowerCase();
+    const mult = licenseMultipliers[licenseKey] ?? licenseMultipliers["standard"];
+    const basePrice = p.sale_price != null && Number(p.sale_price) > 0
+      ? Number(p.sale_price)
+      : Number(p.price) || 0;
+    const linePrice = basePrice * mult;
+    subtotalUsd += linePrice;
+    lineItems.push({ product_id: p.id, price_paid: linePrice, license: licenseKey });
   }
-  subtotalUsd = Math.round(subtotalUsd * 100) / 100;
+  subtotalUsd = Number(subtotalUsd.toFixed(2));
 
-  // 3) Coupon validation (server-side, fail-closed).
+  // -------- 3. Validate coupon --------
   let discountUsd = 0;
-  let appliedCoupon: string | null = null;
-  if (coupon_code) {
-    const code = String(coupon_code).trim().toUpperCase();
-    const { data: c } = await sb.from("coupons").select("*").eq("code", code).maybeSingle();
-    if (c && c.is_active) {
-      const expired = c.expires_at && new Date(c.expires_at).getTime() < Date.now();
-      const usedUp = c.max_uses != null && Number(c.used_count) >= Number(c.max_uses);
-      const minOk = Number(c.min_subtotal || 0) <= subtotalUsd;
-      if (!expired && !usedUp && minOk) {
-        if (c.type === "percent") discountUsd = subtotalUsd * (Number(c.value) / 100);
-        else if (c.type === "fixed") discountUsd = Math.min(subtotalUsd, Number(c.value));
-        discountUsd = Math.round(discountUsd * 100) / 100;
-        appliedCoupon = code;
-      }
+  let couponUsed: any = null;
+  if (couponCode) {
+    const { data: coupon } = await supabase
+      .from("coupons")
+      .select("*")
+      .eq("code", couponCode)
+      .maybeSingle();
+    if (!coupon) return json({ ok: false, reason: "invalid_coupon" }, 400, origin);
+    if (!coupon.is_active) return json({ ok: false, reason: "coupon_inactive" }, 400, origin);
+    if (coupon.expires_at && new Date(coupon.expires_at).getTime() < Date.now()) {
+      return json({ ok: false, reason: "coupon_expired" }, 400, origin);
     }
+    if (coupon.max_uses != null && coupon.used_count >= coupon.max_uses) {
+      return json({ ok: false, reason: "coupon_exhausted" }, 400, origin);
+    }
+    if (Number(coupon.min_subtotal) > 0 && subtotalUsd < Number(coupon.min_subtotal)) {
+      return json({ ok: false, reason: "coupon_min_not_met" }, 400, origin);
+    }
+    if (coupon.type === "percent") {
+      discountUsd = Number((subtotalUsd * (Number(coupon.value) / 100)).toFixed(2));
+    } else if (coupon.type === "fixed") {
+      discountUsd = Math.min(subtotalUsd, Number(coupon.value) || 0);
+    }
+    couponUsed = coupon;
   }
-  const totalUsd = Math.max(0, Math.round((subtotalUsd - discountUsd) * 100) / 100);
+  const totalUsd = Math.max(0, Number((subtotalUsd - discountUsd).toFixed(2)));
 
-  // 4) Convert USD -> selected currency with fx.
-  const fx = await getFxRate(sb);
-  const expectedSmallest = currency === "GHS"
-    ? Math.round(totalUsd * fx * 100)
-    : Math.round(totalUsd * 100);
+  // -------- 4. Convert to selected currency via get_fx_rate --------
+  const { data: fxData } = await supabase.rpc("get_fx_rate");
+  const fxRate = Number(fxData) > 0 ? Number(fxData) : 1;
 
-  const tolerance = 1; // smallest unit
-  if (Math.abs(expectedSmallest - paystackAmount) > tolerance) {
+  let expectedAmountSmallest: number;
+  if (currency === "GHS") {
+    expectedAmountSmallest = Math.round(totalUsd * fxRate * 100);
+  } else {
+    expectedAmountSmallest = Math.round(totalUsd * 100);
+  }
+
+  // -------- 5. Compare to Paystack amount (±1 unit tolerance) --------
+  if (paystackCurrency !== currency) {
+    return json({ ok: false, reason: "currency_mismatch", expected: currency, actual: paystackCurrency }, 400, origin);
+  }
+  const delta = Math.abs(paystackAmount - expectedAmountSmallest);
+  if (delta > 1) {
     return json({
       ok: false,
       reason: "amount_mismatch",
-      expected: expectedSmallest,
-      received: paystackAmount,
-    }, 200, req);
-  }
-  if (currency && paystackCurrency && currency.toUpperCase() !== paystackCurrency) {
-    return json({ ok: false, reason: "currency_mismatch" }, 200, req);
+      expected: expectedAmountSmallest,
+      actual: paystackAmount,
+    }, 400, origin);
   }
 
-  // 5) Insert order + items.
-  const finalCurrency = currency === "GHS" ? "GHS" : "USD";
-  const paystackAmountDecimal = Number((paystackAmount / 100).toFixed(2));
-
-  const { data: orderRow, error: orderErr } = await sb.from("orders").insert({
-    paystack_reference: reference,
-    email: paystackEmail,
-    name: payJson.data.customer?.first_name || payJson.data.customer?.last_name || null,
-    amount: paystackAmountDecimal,
-    currency: finalCurrency,
-    usd_amount: totalUsd,
-    fx_rate_used: finalCurrency === "GHS" ? fx : 1,
-    coupon_code: appliedCoupon,
-    discount_usd: discountUsd,
-    status: "success",
-  }).select("id").single();
-
-  if (orderErr || !orderRow) return json({ ok: false, reason: "order_insert_failed" }, 200, req);
-
-  await sb.from("order_items").insert(orderItems.map((it) => ({
-    order_id: orderRow.id,
-    product_id: it.product_id,
-    price_paid: it.price_paid,
-    license: it.license,
-  })));
-
-  // Increment coupon usage.
-  if (appliedCoupon) {
-    await sb.rpc("increment_coupon_uses", { p_code: appliedCoupon }).catch(() => {});
-    await sb.from("coupons").select("used_count").eq("code", appliedCoupon).maybeSingle();
-    // Fallback safe increment.
-    try {
-      const { data: c } = await sb.from("coupons").select("used_count").eq("code", appliedCoupon).maybeSingle();
-      if (c) await sb.from("coupons").update({ used_count: Number(c.used_count || 0) + 1 }).eq("code", appliedCoupon);
-    } catch (_) { /* noop */ }
+  // -------- 6. Check for duplicate reference --------
+  const { data: existingOrder } = await supabase
+    .from("orders").select("id").eq("paystack_reference", reference).maybeSingle();
+  if (existingOrder && existingOrder.id) {
+    return json({ ok: true, order_id: existingOrder.id, duplicate: true }, 200, origin);
   }
 
-  // 6) Post-commit side effects: sales counters, wallet credits, activity log.
-  for (const it of orderItems) {
-    await sb.rpc("increment_sales_count", { p_id: it.product_id }).catch(() => {});
-    await sb.rpc("log_activity", {
-      p_email: paystackEmail,
-      p_event: "order",
-      p_meta: { product_id: it.product_id, order_id: orderRow.id, price: it.price_paid, license: it.license },
-    }).catch(() => {});
+  // -------- 7. Insert order --------
+  const orderEmail = tx.customer?.email || null;
+  const orderName = tx.customer?.first_name
+    ? `${tx.customer.first_name} ${tx.customer.last_name || ""}`.trim()
+    : (tx.customer?.email || null);
 
-    if (it.designer_email) {
-      const payout = Math.round(it.price_paid * 0.70 * 100) / 100;
-      await sb.rpc("credit_wallet", {
-        p_email: it.designer_email,
-        p_amount: payout,
-        p_type: "earning",
-        p_note: `Sale: ${it.title} - order ${reference}`,
-      }).catch(() => {});
+  const usdAmount = totalUsd;
+  const paidAmount = currency === "GHS"
+    ? Number((totalUsd * fxRate).toFixed(2))
+    : totalUsd;
+
+  const { data: orderRow, error: orderErr } = await supabase
+    .from("orders")
+    .insert({
+      paystack_reference: reference,
+      email: orderEmail,
+      name: orderName,
+      amount: paidAmount,
+      currency,
+      usd_amount: usdAmount,
+      fx_rate_used: currency === "GHS" ? fxRate : 1,
+      coupon_code: couponUsed ? couponUsed.code : null,
+      discount_usd: discountUsd,
+      status: "success",
+    })
+    .select("id")
+    .single();
+
+  if (orderErr || !orderRow) {
+    return json({ ok: false, reason: "order_insert_failed", detail: orderErr?.message }, 500, origin);
+  }
+
+  const orderId = orderRow.id;
+
+  // -------- 8. Insert order items + increment counters --------
+  const orderItemsPayload = lineItems.map((li) => ({
+    order_id: orderId,
+    product_id: li.product_id,
+    price_paid: li.price_paid,
+    license: li.license,
+  }));
+
+  const { error: itemsErr } = await supabase.from("order_items").insert(orderItemsPayload);
+  if (itemsErr) {
+    return json({ ok: false, reason: "order_items_insert_failed", detail: itemsErr.message }, 500, origin);
+  }
+
+  for (const li of lineItems) {
+    await supabase.rpc("increment_sales_count", { p_product_id: li.product_id });
+  }
+
+  // -------- 9. Increment coupon usage --------
+  if (couponUsed) {
+    await supabase
+      .from("coupons")
+      .update({ used_count: (couponUsed.used_count || 0) + 1 })
+      .eq("id", couponUsed.id);
+  }
+
+  // -------- 10. Log activity (per item) --------
+  if (orderEmail) {
+    for (const li of lineItems) {
+      await supabase.from("activity_log").insert({
+        email: orderEmail,
+        event: "order",
+        meta: {
+          order_id: orderId,
+          product_id: li.product_id,
+          license: li.license,
+          usd_amount: li.price_paid,
+        },
+      });
     }
   }
 
-  return json({ ok: true, order_id: orderRow.id, total_usd: totalUsd, discount_usd: discountUsd }, 200, req);
+  return json({ ok: true, order_id: orderId }, 200, origin);
 });

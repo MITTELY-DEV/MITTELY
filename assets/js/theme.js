@@ -1,63 +1,73 @@
-/* MITTELY — theme.js
-   Syncs the theme toggle, swaps the sun/moon FA icon, persists the choice. */
+/* ============================================
+   MITTELY — theme.js
+   Light/dark toggle with FA icon swap + persistence
+   ============================================ */
 (function () {
   'use strict';
 
+  if (!window.MITTELY) window.MITTELY = {};
+
   var STORAGE_KEY = 'mittely-theme';
 
-  function currentTheme() {
-    return document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light';
-  }
-
-  function iconFor(theme) {
-    return theme === 'dark' ? 'fa-solid fa-sun' : 'fa-solid fa-moon';
-  }
-
-  function syncButtons() {
-    var theme = currentTheme();
-    var iconClass = iconFor(theme);
-    ['themeToggle', 'adminThemeToggle'].forEach(function (id) {
-      var btn = document.getElementById(id);
-      if (!btn) return;
-      var i = btn.querySelector('i');
-      if (i) i.className = iconClass;
-      btn.setAttribute('aria-label', theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme');
-    });
+  function current() {
+    return document.documentElement.dataset.theme || 'light';
   }
 
   function apply(theme) {
+    if (theme !== 'light' && theme !== 'dark') theme = 'light';
     document.documentElement.dataset.theme = theme;
     try { localStorage.setItem(STORAGE_KEY, theme); } catch (e) {}
-    syncButtons();
+    updateIcons(theme);
   }
 
   function toggle() {
-    apply(currentTheme() === 'dark' ? 'light' : 'dark');
+    apply(current() === 'light' ? 'dark' : 'light');
   }
 
-  function onReady(fn) {
-    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', fn);
-    else fn();
-  }
-
-  onReady(function () {
-    syncButtons();
-    ['themeToggle', 'adminThemeToggle'].forEach(function (id) {
-      var btn = document.getElementById(id);
-      if (btn) btn.addEventListener('click', toggle);
+  function updateIcons(theme) {
+    document.querySelectorAll('[data-theme-toggle]').forEach(function (btn) {
+      var icon = btn.querySelector('i');
+      if (!icon) return;
+      if (theme === 'dark') {
+        icon.className = 'fa-solid fa-sun';
+        btn.setAttribute('aria-label', 'Switch to light mode');
+      } else {
+        icon.className = 'fa-solid fa-moon';
+        btn.setAttribute('aria-label', 'Switch to dark mode');
+      }
     });
+  }
 
-    // React to OS-level changes only if the user hasn't chosen explicitly.
-    if (window.matchMedia) {
-      var mql = window.matchMedia('(prefers-color-scheme: dark)');
-      var handler = function (e) {
-        if (localStorage.getItem(STORAGE_KEY)) return;
-        apply(e.matches ? 'dark' : 'light');
-      };
-      if (mql.addEventListener) mql.addEventListener('change', handler);
-      else if (mql.addListener) mql.addListener(handler);
-    }
-  });
+  function injectButton() {
+    var navActions = document.querySelector('.nav-actions');
+    if (!navActions || document.querySelector('[data-theme-toggle]')) return;
+    var btn = document.createElement('button');
+    btn.className = 'icon-btn';
+    btn.setAttribute('data-theme-toggle', '');
+    btn.setAttribute('aria-label', 'Toggle theme');
+    btn.innerHTML = '<i class="fa-solid fa-moon"></i>';
+    btn.addEventListener('click', toggle);
+    var first = navActions.firstChild;
+    if (first) navActions.insertBefore(btn, first);
+    else navActions.appendChild(btn);
+  }
 
-  window.mittelyTheme = { toggle: toggle, apply: apply, current: currentTheme };
+  function init() {
+    apply(current());
+    injectButton();
+    updateIcons(current());
+  }
+
+  window.MITTELY.theme = {
+    current: current,
+    apply: apply,
+    toggle: toggle,
+    init: init
+  };
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
+  }
 })();

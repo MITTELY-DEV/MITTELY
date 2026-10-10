@@ -1,1127 +1,1180 @@
-/* MITTELY — admin.js
-   Admin shell + sections: dashboard, products, orders, reviews, submissions,
-   coupons, blog, users, activity, payouts, newsletter, settings, admins. */
+/* ============================================
+   MITTELY — admin.js
+   Admin console: gating, sidebar, sections,
+   products, orders, reviews, submissions,
+   coupons, blog, users, activity, newsletter,
+   settings, admins, multi-chart analytics.
+   ============================================ */
 (function () {
   'use strict';
 
-  var state = {
-    user: null, email: null, isAdmin: false,
-    section: 'dashboard',
-    settings: {},
-    users: { page: 1, pageSize: 20, search: '' },
-    activity: { event: '', page: 1, pageSize: 20 },
-    currentChart: 'sales',
-    currentPeriod: 30
-  };
+  if (!window.MITTELY) window.MITTELY = {};
 
-  function sb() { return window.mittely && window.mittely.sb && window.mittely.sb(); }
-  function qs(sel, root) { return (root || document).querySelector(sel); }
-  function qsa(sel, root) { return Array.prototype.slice.call((root || document).querySelectorAll(sel)); }
-  function esc(s) { return window.escapeHtml ? window.escapeHtml(s) : String(s == null ? '' : s); }
-  function money(usd) { return (window.mittelyCurrency && window.mittelyCurrency.format) ? window.mittelyCurrency.format(usd) : ('$' + Number(usd || 0).toFixed(2)); }
-  function toast(m, k) { if (window.toast) window.toast(m, k); }
-  function confirmTyped(message, expected) {
-    var typed = window.prompt(message + '\n\nType "' + expected + '" to confirm:');
-    return typed === expected;
+  var esc = function (s) { return window.MITTELY.main ? window.MITTELY.main.escapeHtml(s) : String(s || ''); };
+  var toast = function (m, t) { if (window.MITTELY.main) window.MITTELY.main.toast(m, t); };
+  var money = function (n) { return window.MITTELY.currency ? window.MITTELY.currency.formatMoney(n) : ('$' + Number(n || 0).toFixed(2)); };
+  var setLoading = function (b, l, txt) { if (window.MITTELY.main) window.MITTELY.main.setLoading(b, l, txt); };
+
+  var OWNER_EMAIL = 'henryagyemang906@gmail.com';
+  var currentSection = 'dashboard';
+  var charts = { period: 30, type: 'sales' };
+  var usersPage = 1;
+  var activityPage = 1;
+  var activityFilter = { event: '', date: '' };
+
+  /* ---------- Gating ---------- */
+
+  async function init() {
+    var gate = document.getElementById('adminGate');
+    var forbidden = document.getElementById('adminForbidden');
+    var layout = document.getElementById('adminLayout');
+    var signInBtn = document.getElementById('adminSignInBtn');
+
+    if (signInBtn) signInBtn.addEventListener('click', function () { window.MITTELY.auth.openSignInModal(); });
+
+    async function evaluate() {
+      var session = await window.MITTELY.auth.getSession();
+      if (!session || !session.user) {
+        if (gate) gate.style.display = 'block';
+        if (forbidden) forbidden.style.display = 'none';
+        if (layout) layout.style.display = 'none';
+        return;
+      }
+      var admin = await window.MITTELY.auth.isAdmin();
+      if (!admin) {
+        if (gate) gate.style.display = 'none';
+        if (forbidden) forbidden.style.display = 'block';
+        if (layout) layout.style.display = 'none';
+        return;
+      }
+      if (gate) gate.style.display = 'none';
+      if (forbidden) forbidden.style.display = 'none';
+      if (layout) layout.style.display = 'grid';
+      bindAdminUi();
+      showSection('dashboard');
+    }
+
+    document.addEventListener('mittely:auth-changed', evaluate);
+    await evaluate();
   }
 
-  /* ================= Gate ================= */
+  /* ---------- Sidebar / sections ---------- */
 
-  function showGate(which) {
-    qs('#adminGate').hidden = which !== 'gate';
-    qs('#adminForbidden').hidden = which !== 'forbidden';
-    qs('#adminShell').hidden = which !== 'shell';
-  }
-
-  function hydrateAdminUser() {
-    var u = state.user;
-    if (!u) return;
-    var email = u.email || '';
-    var avatar = (u.user_metadata && u.user_metadata.avatar_url) || '';
-    var a = document.getElementById('adminAvatar');
-    var e = document.getElementById('adminEmail');
-    if (a) a.src = avatar || 'https://ui-avatars.com/api/?name=' + encodeURIComponent(email);
-    if (e) e.textContent = email;
-  }
-
-  /* ================= Sidebar ================= */
-
-  function bindNav() {
-    qsa('.admin-nav-item').forEach(function (b) {
-      b.addEventListener('click', function () {
-        var section = b.getAttribute('data-section');
-        setSection(section);
+  function bindAdminUi() {
+    var sidebar = document.getElementById('adminSidebar');
+    var toggle = document.getElementById('adminSidebarToggle');
+    if (toggle && !toggle.dataset.bound) {
+      toggle.dataset.bound = '1';
+      toggle.addEventListener('click', function () {
+        if (sidebar) sidebar.classList.toggle('open');
       });
+    }
+
+    var nav = document.querySelector('.admin-nav');
+    if (nav && !nav.dataset.bound) {
+      nav.dataset.bound = '1';
+      nav.addEventListener('click', function (e) {
+        var btn = e.target.closest('.admin-nav-item');
+        if (!btn) return;
+        showSection(btn.getAttribute('data-section') || 'dashboard');
+        if (sidebar && window.innerWidth < 1024) sidebar.classList.remove('open');
+      });
+    }
+  }
+
+  function showSection(name) {
+    currentSection = name;
+    document.querySelectorAll('.admin-nav-item').forEach(function (b) {
+      b.classList.toggle('active', b.getAttribute('data-section') === name);
     });
-    var hamburger = document.getElementById('adminHamburger');
-    var sidebar = document.getElementById('adminSidebar');
-    var closeBtn = document.getElementById('adminSidebarClose');
-    if (hamburger && sidebar) hamburger.addEventListener('click', function () { sidebar.classList.add('is-open'); });
-    if (closeBtn && sidebar) closeBtn.addEventListener('click', function () { sidebar.classList.remove('is-open'); });
+    document.querySelectorAll('.admin-section').forEach(function (s) {
+      s.classList.toggle('active', s.id === 'admin-section-' + name);
+    });
+    loadSection(name);
   }
 
-  function setSection(name) {
-    state.section = name;
-    qsa('.admin-nav-item').forEach(function (b) { b.classList.toggle('is-active', b.getAttribute('data-section') === name); });
-    qsa('.admin-section').forEach(function (s) { s.hidden = s.id !== ('section-' + name); });
-    var titleEl = document.getElementById('adminPageTitle');
-    if (titleEl) titleEl.textContent = name.charAt(0).toUpperCase() + name.slice(1);
-    var sidebar = document.getElementById('adminSidebar');
-    if (sidebar) sidebar.classList.remove('is-open');
-
-    switch (name) {
-      case 'dashboard': loadDashboard(); break;
-      case 'products': loadProducts(); break;
-      case 'orders': loadOrders(); break;
-      case 'reviews': loadReviews(); break;
-      case 'submissions': loadSubmissions(); break;
-      case 'coupons': loadCoupons(); break;
-      case 'blog': loadBlog(); break;
-      case 'users': loadUsers(); break;
-      case 'activity': loadActivity(); break;
-      case 'payouts': loadPayouts(); break;
-      case 'newsletter': loadNewsletter(); break;
-      case 'settings': loadSettings(); break;
-      case 'admins': loadAdmins(); break;
+  async function loadSection(name) {
+    try {
+      switch (name) {
+        case 'dashboard': await loadDashboard(); break;
+        case 'products': await loadProducts(); break;
+        case 'orders': await loadOrders(); break;
+        case 'reviews': await loadReviews(); break;
+        case 'submissions': await loadSubmissions(); break;
+        case 'coupons': await loadCoupons(); break;
+        case 'blog': await loadBlog(); break;
+        case 'users': await loadUsers(); break;
+        case 'activity': await loadActivity(); break;
+        case 'newsletter': await loadNewsletter(); break;
+        case 'settings': await loadSettings(); break;
+        case 'admins': await loadAdmins(); break;
+      }
+    } catch (e) {
+      toast('Failed to load section', 'error');
     }
   }
 
-  /* ================= Dashboard ================= */
+  /* ---------- Dashboard ---------- */
 
-  function loadDashboard() {
-    var client = sb();
-    if (!client) return;
+  async function loadDashboard() {
+    if (!window.MITTELY.supabase) return;
+    try {
+      var [ordersRes, productsRes] = await Promise.all([
+        window.MITTELY.supabase.from('orders').select('*').order('created_at', { ascending: false }),
+        window.MITTELY.supabase.from('products').select('id, title, price, sales_count').order('sales_count', { ascending: false }).limit(5)
+      ]);
+      var orders = (ordersRes && ordersRes.data) || [];
+      var topProducts = (productsRes && productsRes.data) || [];
 
-    client.rpc('admin_stats').then(function (res) {
-      var s = (res && res.data) || {};
-      setText('statRevenueToday', money(s.revenue_today || 0));
-      setText('statRevenueTodayGhs', ghsLabel(s.revenue_today || 0));
-      setText('statRevenue7d', money(s.revenue_7d || 0));
-      setText('statRevenue30d', money(s.revenue_30d || 0));
-      setText('statRevenueAll', money(s.revenue_all || 0));
-      setText('statOrders', String(s.orders_count || 0));
-      setText('statDownloads', String(s.downloads_count || 0));
-      setText('statPendingReviews', String(s.pending_reviews || 0));
-      setText('statPendingSubs', String(s.pending_submissions || 0));
-      setText('statPendingPayouts', String(s.pending_payouts || 0));
-    }).catch(function () {});
+      var now = Date.now();
+      var sums = { today: 0, d7: 0, d30: 0, all: 0 };
+      orders.forEach(function (o) {
+        var usd = Number(o.usd_amount) || 0;
+        sums.all += usd;
+        var t = new Date(o.created_at).getTime();
+        if (now - t < 86400000) sums.today += usd;
+        if (now - t < 7 * 86400000) sums.d7 += usd;
+        if (now - t < 30 * 86400000) sums.d30 += usd;
+      });
 
-    client.from('orders')
-      .select('paystack_reference,email,usd_amount,currency,status,created_at')
-      .order('created_at', { ascending: false })
-      .limit(5)
-      .then(function (res) {
-        var body = document.getElementById('adminRecentOrders');
-        if (!body) return;
-        var rows = (res && res.data) || [];
-        if (!rows.length) { body.innerHTML = '<tr><td colspan="5" class="cell-empty">No orders yet.</td></tr>'; return; }
-        body.innerHTML = rows.map(function (o) {
-          return '<tr>' +
-            '<td>' + new Date(o.created_at).toLocaleDateString() + '</td>' +
-            '<td>' + esc(o.paystack_reference) + '</td>' +
-            '<td>' + esc(o.email) + '</td>' +
+      setStat('revenue_today', money(sums.today));
+      setStat('revenue_7d', money(sums.d7));
+      setStat('revenue_30d', money(sums.d30));
+      setStat('revenue_all', money(sums.all));
+
+      var tbody = document.getElementById('adminRecentOrders');
+      if (tbody) {
+        tbody.innerHTML = orders.slice(0, 5).map(function (o) {
+          var cls = o.status === 'success' ? 'success' : (o.status === 'failed' ? 'failed' : 'pending');
+          return '<tr><td>' + esc(o.paystack_reference) + '</td><td>' + esc(o.email) + '</td>' +
             '<td>' + money(o.usd_amount) + '</td>' +
-            '<td><span class="status-badge status-' + esc(o.status) + '">' + esc(o.status) + '</span></td>' +
-          '</tr>';
-        }).join('');
-      });
+            '<td><span class="order-status-badge ' + cls + '">' + esc(o.status) + '</span></td>' +
+            '<td>' + (o.created_at ? new Date(o.created_at).toLocaleDateString() : '') + '</td></tr>';
+        }).join('') || '<tr><td colspan="5">No orders yet</td></tr>';
+      }
 
-    client.from('activity_log')
-      .select('email,event,created_at')
-      .order('created_at', { ascending: false })
-      .limit(8)
-      .then(function (res) {
-        var list = document.getElementById('adminRecentActivity');
-        if (!list) return;
-        var rows = (res && res.data) || [];
-        if (!rows.length) { list.innerHTML = '<li class="activity-item"><i class="fa-solid fa-circle-info" aria-hidden="true"></i><div>No activity yet.</div></li>'; return; }
-        list.innerHTML = rows.map(function (r) {
-          return '<li class="activity-item">' +
-            '<i class="fa-solid fa-circle-info" aria-hidden="true"></i>' +
-            '<div><div>' + esc(r.event.replace(/_/g, ' ')) + ' — ' + esc(r.email) + '</div>' +
-            '<div class="activity-meta">' + new Date(r.created_at).toLocaleString() + '</div></div>' +
-          '</li>';
-        }).join('');
-      });
+      var actList = document.getElementById('adminRecentActivity');
+      if (actList) {
+        var actRes = await window.MITTELY.supabase
+          .from('activity_log').select('*').order('created_at', { ascending: false }).limit(8);
+        var acts = (actRes && actRes.data) || [];
+        actList.innerHTML = acts.length ? acts.map(activityItemHtml).join('') : '<li>No activity yet</li>';
+      }
 
-    bindChartSwitcher();
-    renderChart(state.currentChart, state.currentPeriod);
+      bindChartTabs();
+      await renderChart(charts.type, charts.period, orders, topProducts);
+    } catch (e) { /* silent */ }
   }
 
-  function setText(id, value) { var el = document.getElementById(id); if (el) el.textContent = value; }
-
-  function ghsLabel(usd) {
-    var rate = window.mittelyCurrency && window.mittelyCurrency.currentRate ? window.mittelyCurrency.currentRate() : 15.5;
-    try { return new Intl.NumberFormat('en-GH', { style: 'currency', currency: 'GHS' }).format(Number(usd || 0) * rate); }
-    catch (e) { return 'GH₵ ' + (Number(usd || 0) * rate).toFixed(2); }
+  function setStat(key, value) {
+    var el = document.querySelector('[data-stat="' + key + '"]');
+    if (el) el.textContent = value;
   }
 
-  /* ================= Charts ================= */
-
-  function bindChartSwitcher() {
-    var sw = document.getElementById('chartSwitcher');
-    if (sw && sw.dataset.bound !== '1') {
-      sw.dataset.bound = '1';
-      qsa('button', sw).forEach(function (b) {
-        b.addEventListener('click', function () {
-          qsa('button', sw).forEach(function (x) { x.classList.remove('is-active'); });
-          b.classList.add('is-active');
-          state.currentChart = b.getAttribute('data-chart');
-          renderChart(state.currentChart, state.currentPeriod);
-        });
-      });
-    }
-    var sel = document.getElementById('chartPeriod');
-    if (sel && sel.dataset.bound !== '1') {
-      sel.dataset.bound = '1';
-      sel.addEventListener('change', function () {
-        state.currentPeriod = Number(sel.value) || 30;
-        renderChart(state.currentChart, state.currentPeriod);
-      });
-    }
+  function activityItemHtml(a) {
+    var icons = {
+      signup: 'fa-user-plus', sign_in: 'fa-right-to-bracket', order: 'fa-receipt',
+      download: 'fa-download', review: 'fa-star', wishlist: 'fa-heart'
+    };
+    return '<li><span class="activity-icon"><i class="fa-solid ' + (icons[a.event] || 'fa-circle') + '"></i></span>' +
+      '<div><div class="activity-email">' + esc(a.email) + '</div>' +
+      '<div class="activity-meta">' + esc(a.event) + ' · ' + new Date(a.created_at).toLocaleString() + '</div></div></li>';
   }
 
-  function renderChart(kind, period) {
+  function bindChartTabs() {
+    var wrap = document.querySelector('.admin-chart-tabs');
+    if (!wrap || wrap.dataset.bound === '1') return;
+    wrap.dataset.bound = '1';
+    wrap.addEventListener('click', async function (e) {
+      var tab = e.target.closest('.chart-tab');
+      if (!tab) return;
+      wrap.querySelectorAll('.chart-tab').forEach(function (t) { t.classList.toggle('active', t === tab); });
+      charts.type = tab.getAttribute('data-chart') || 'sales';
+      var ordersRes = await window.MITTELY.supabase.from('orders').select('*').order('created_at', { ascending: false });
+      var productsRes = await window.MITTELY.supabase.from('products').select('id, title, price, sales_count').order('sales_count', { ascending: false }).limit(5);
+      renderChart(charts.type, charts.period, (ordersRes && ordersRes.data) || [], (productsRes && productsRes.data) || []);
+    });
+  }
+
+  async function renderChart(type, period, orders, topProducts) {
     var canvas = document.getElementById('chartCanvas');
     var summary = document.getElementById('chartSummary');
     if (!canvas) return;
-    var client = sb();
-    if (!client) return;
+    canvas.innerHTML = '';
 
-    var since = new Date(Date.now() - period * 86400000).toISOString();
-    var loader = Promise.resolve(null);
-
-    if (kind === 'sales' || kind === 'revenue') {
-      loader = client.from('orders')
-        .select('usd_amount,created_at,status')
-        .gte('created_at', since)
-        .eq('status', 'success');
-    } else if (kind === 'status') {
-      loader = client.from('orders').select('status').gte('created_at', since);
-    } else if (kind === 'top') {
-      loader = client.from('products').select('title,sales_count').order('sales_count', { ascending: false }).limit(5);
-    } else if (kind === 'downloads') {
-      loader = client.from('products').select('title,download_count').order('download_count', { ascending: false }).limit(5);
-    }
-
-    loader.then(function (res) {
-      var rows = (res && res.data) || [];
-      if (kind === 'sales') {
-        var series = bucketByDay(rows, period, function (r) { return Number(r.usd_amount || 0); });
-        var total = series.reduce(function (a, b) { return a + b; }, 0);
-        if (summary) summary.textContent = 'Total: ' + money(total) + ' over ' + period + ' days';
-        drawBars(canvas, series);
-      } else if (kind === 'revenue') {
-        var seriesR = bucketByDay(rows, period, function (r) { return Number(r.usd_amount || 0); });
-        var totalR = seriesR.reduce(function (a, b) { return a + b; }, 0);
-        if (summary) summary.textContent = 'Revenue: ' + money(totalR);
-        drawLine(canvas, seriesR);
-      } else if (kind === 'status') {
-        var counts = { pending: 0, success: 0, failed: 0 };
-        rows.forEach(function (r) { counts[r.status] = (counts[r.status] || 0) + 1; });
-        var total2 = rows.length || 1;
-        if (summary) summary.textContent = rows.length + ' orders';
-        drawDonut(canvas, [
-          { label: 'Success', value: counts.success, color: '#16A34A' },
-          { label: 'Pending', value: counts.pending, color: '#D97706' },
-          { label: 'Failed', value: counts.failed, color: '#DC2626' }
-        ], total2);
-      } else if (kind === 'top' || kind === 'downloads') {
-        var key = kind === 'top' ? 'sales_count' : 'download_count';
-        if (summary) summary.textContent = kind === 'top' ? 'Top 5 by sales' : 'Top 5 by downloads';
-        drawHBars(canvas, rows.map(function (r) { return { label: r.title, value: Number(r[key] || 0) }; }));
+    if (type === 'sales' || type === 'revenue' || type === 'downloads') {
+      var buckets = [];
+      var labels = [];
+      for (var i = period - 1; i >= 0; i--) {
+        var d = new Date(); d.setDate(d.getDate() - i);
+        labels.push(d);
+        buckets.push(0);
       }
-    });
-  }
-
-  function bucketByDay(rows, days, valueFn) {
-    var out = [];
-    var now = new Date();
-    var byDay = {};
-    rows.forEach(function (r) {
-      var d = new Date(r.created_at);
-      var k = d.toISOString().slice(0, 10);
-      byDay[k] = (byDay[k] || 0) + valueFn(r);
-    });
-    for (var i = days - 1; i >= 0; i--) {
-      var d = new Date(now.getTime() - i * 86400000);
-      var k = d.toISOString().slice(0, 10);
-      out.push(byDay[k] || 0);
-    }
-    return out;
-  }
-
-  function drawBars(el, values) {
-    var max = Math.max(1, Math.max.apply(null, values));
-    el.innerHTML = values.map(function (v) {
-      var pct = Math.max(2, Math.round((v / max) * 100));
-      return '<div class="bar" style="height:' + pct + '%" title="' + v.toFixed(2) + '"></div>';
-    }).join('');
-  }
-
-  function drawLine(el, values) {
-    var max = Math.max(1, Math.max.apply(null, values));
-    var w = 600, h = 220, pad = 12;
-    var step = values.length > 1 ? (w - pad * 2) / (values.length - 1) : 0;
-    var points = values.map(function (v, i) {
-      var x = pad + i * step;
-      var y = h - pad - ((v / max) * (h - pad * 2));
-      return x.toFixed(1) + ',' + y.toFixed(1);
-    }).join(' ');
-    el.innerHTML = '<svg viewBox="0 0 ' + w + ' ' + h + '" preserveAspectRatio="none" width="100%" height="220" role="img" aria-label="Revenue trend">' +
-      '<polyline points="' + points + '" fill="none" stroke="var(--highlight)" stroke-width="3" />' +
-      '</svg>';
-  }
-
-  function drawDonut(el, segments, total) {
-    var stops = [];
-    var acc = 0;
-    segments.forEach(function (s) {
-      var pct = total > 0 ? (s.value / total) * 100 : 0;
-      stops.push(s.color + ' ' + acc + '% ' + (acc + pct) + '%');
-      acc += pct;
-    });
-    el.innerHTML = '' +
-      '<div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap">' +
-      '<div class="donut" style="background:conic-gradient(' + stops.join(',') + ')"></div>' +
-      '<ul style="list-style:none;margin:0;padding:0;display:grid;gap:6px">' +
-      segments.map(function (s) {
-        return '<li class="chart-legend-item"><span class="chart-legend-dot" style="background:' + s.color + '"></span> ' + esc(s.label) + ' — ' + s.value + '</li>';
-      }).join('') +
-      '</ul></div>';
-  }
-
-  function drawHBars(el, items) {
-    var max = Math.max(1, Math.max.apply(null, items.map(function (i) { return i.value; })));
-    el.innerHTML = items.map(function (i) {
-      var pct = Math.max(4, Math.round((i.value / max) * 100));
-      return '<div class="chart-hbar-row">' +
-        '<span class="chart-hbar-label">' + esc(i.label) + '</span>' +
-        '<span class="chart-hbar-bar" style="width:' + pct + '%"></span>' +
-        '<span>' + i.value + '</span>' +
-      '</div>';
-    }).join('');
-  }
-
-  /* ================= Products ================= */
-
-  var PRODUCT_COLS = 'id,title,slug,category,tech,style_tags,price,sale_price,rating,reviews_count,short_desc,long_desc,badge,image_url,gallery,demo_url,preview_embed_url,whats_included,version,changelog,is_free,is_hot_sale,is_black_friday,is_featured,is_published,download_path,designer_email,download_count,sales_count,created_at,updated_at';
-
-  function loadProducts() {
-    var client = sb();
-    var body = document.getElementById('adminProductsBody');
-    if (!client || !body) return;
-    body.innerHTML = '<tr><td colspan="7" class="cell-empty">Loading…</td></tr>';
-    client.from('products').select(PRODUCT_COLS).order('created_at', { ascending: false })
-      .then(function (res) {
-        var rows = (res && res.data) || [];
-        if (!rows.length) { body.innerHTML = '<tr><td colspan="7" class="cell-empty">No products.</td></tr>'; return; }
-        body.innerHTML = rows.map(function (p) {
-          var flags = [];
-          if (p.is_hot_sale) flags.push('<i class="fa-solid fa-star" title="Hot Sale"></i>');
-          if (p.is_black_friday) flags.push('<i class="fa-solid fa-heart" title="Black Friday"></i>');
-          if (p.is_featured) flags.push('<i class="fa-solid fa-wand-magic-sparkles" title="Featured"></i>');
-          if (p.is_free) flags.push('<i class="fa-solid fa-gift" title="Free"></i>');
-          return '<tr>' +
-            '<td>' + esc(p.title) + '</td>' +
-            '<td>' + esc(p.category) + '</td>' +
-            '<td>' + money(p.sale_price || p.price) + '</td>' +
-            '<td>' + esc(p.designer_email || '—') + '</td>' +
-            '<td>' + flags.join(' ') + '</td>' +
-            '<td>' + (p.is_published ? '<i class="fa-solid fa-check" style="color:var(--success)"></i>' : '<i class="fa-solid fa-xmark" style="color:var(--danger)"></i>') + '</td>' +
-            '<td><span class="table-actions">' +
-              '<button type="button" data-edit="' + esc(p.id) + '" aria-label="Edit"><i class="fa-solid fa-pen"></i></button>' +
-              '<button type="button" data-dup="' + esc(p.id) + '" aria-label="Duplicate"><i class="fa-regular fa-copy"></i></button>' +
-              '<button type="button" data-del="' + esc(p.id) + '" aria-label="Delete"><i class="fa-solid fa-trash"></i></button>' +
-            '</span></td>' +
-          '</tr>';
-        }).join('');
-
-        qsa('[data-edit]', body).forEach(function (b) {
-          b.addEventListener('click', function () { editProduct(b.getAttribute('data-edit')); });
-        });
-        qsa('[data-dup]', body).forEach(function (b) {
-          b.addEventListener('click', function () { duplicateProduct(b.getAttribute('data-dup')); });
-        });
-        qsa('[data-del]', body).forEach(function (b) {
-          b.addEventListener('click', function () { deleteProduct(b.getAttribute('data-del')); });
-        });
+      orders.forEach(function (o) {
+        var t = new Date(o.created_at);
+        var diff = Math.floor((Date.now() - t.getTime()) / 86400000);
+        if (diff >= 0 && diff < period) {
+          var idx = period - 1 - diff;
+          if (buckets[idx] !== undefined) buckets[idx] += Number(o.usd_amount) || 0;
+        }
       });
-
-    var newBtn = document.getElementById('newProductBtn');
-    if (newBtn && newBtn.dataset.bound !== '1') {
-      newBtn.dataset.bound = '1';
-      newBtn.addEventListener('click', function () { editProduct(null); });
-    }
-  }
-
-  function editProduct(id) {
-    var client = sb();
-    if (!client) return;
-    var promptDone = Promise.resolve(null);
-    if (id) promptDone = client.from('products').select('*').eq('id', id).maybeSingle();
-
-    promptDone.then(function (res) {
-      var p = (res && res.data) || {};
-      var title = window.prompt('Title', p.title || '');
-      if (title === null) return;
-      var category = window.prompt('Category (ui-kits, dashboards, landing-pages, ecommerce, portfolios, mobile-apps)', p.category || 'ui-kits');
-      if (category === null) return;
-      var price = window.prompt('Price (USD)', p.price != null ? String(p.price) : '');
-      if (price === null) return;
-      var sale = window.prompt('Sale price (leave empty for none)', p.sale_price != null ? String(p.sale_price) : '');
-      var designerEmail = window.prompt('Designer email (wallet payee)', p.designer_email || (window.MITTELY_CONFIG && window.MITTELY_CONFIG.ADMIN_EMAIL) || '');
-      var slug = p.slug || (window.mittely && window.mittely.slugify ? window.mittely.slugify(title) : title.toLowerCase().replace(/[^a-z0-9]+/g, '-'));
-      var payload = {
-        title: title,
-        slug: slug,
-        category: category,
-        price: parseFloat(price) || 0,
-        sale_price: sale ? parseFloat(sale) : null,
-        designer_email: designerEmail || null
-      };
-      if (id) {
-        client.from('products').update(payload).eq('id', id).then(function (r) {
-          if (r.error) { toast('Update failed: ' + r.error.message, 'error'); return; }
-          toast('Product updated.', 'success'); loadProducts();
-        });
-      } else {
-        client.from('products').insert(payload).then(function (r) {
-          if (r.error) { toast('Create failed: ' + r.error.message, 'error'); return; }
-          toast('Product created.', 'success'); loadProducts();
-        });
+      var max = Math.max.apply(null, buckets.concat([1]));
+      if (summary) {
+        var total = buckets.reduce(function (a, b) { return a + b; }, 0);
+        summary.textContent = (type === 'revenue' ? money(total) : total + ' orders');
       }
-    });
-  }
-
-  function duplicateProduct(id) {
-    var client = sb();
-    if (!client) return;
-    client.from('products').select('*').eq('id', id).maybeSingle().then(function (res) {
-      var p = res && res.data;
-      if (!p) return;
-      delete p.id; delete p.created_at; delete p.updated_at;
-      p.title = p.title + ' (copy)';
-      p.slug = p.slug + '-copy-' + Math.random().toString(36).slice(2, 6);
-      p.is_published = false;
-      client.from('products').insert(p).then(function (r) {
-        if (r.error) { toast('Duplicate failed.', 'error'); return; }
-        toast('Duplicated.', 'success'); loadProducts();
+      buckets.forEach(function (v, i) {
+        var h = (v / max) * 180;
+        var bar = document.createElement('div');
+        bar.style.cssText = 'flex:1;background:linear-gradient(to top,var(--lime),var(--highlight));height:' + Math.max(4, h) + 'px;border-radius:4px 4px 0 0;transition:height 400ms;';
+        canvas.appendChild(bar);
       });
-    });
-  }
-
-  function deleteProduct(id) {
-    if (!confirmTyped('Delete this product permanently?', 'DELETE')) return;
-    sb().from('products').delete().eq('id', id).then(function (r) {
-      if (r.error) { toast('Delete failed.', 'error'); return; }
-      toast('Deleted.', 'success'); loadProducts();
-    });
-  }
-
-  /* ================= Orders ================= */
-
-  function loadOrders() {
-    var client = sb();
-    var body = document.getElementById('adminOrdersBody');
-    if (!client || !body) return;
-    var status = document.getElementById('orderStatusFilter') ? document.getElementById('orderStatusFilter').value : '';
-    var search = document.getElementById('orderSearch') ? document.getElementById('orderSearch').value.trim() : '';
-    var q = client.from('orders').select('*').order('created_at', { ascending: false }).limit(50);
-    if (status) q = q.eq('status', status);
-    if (search) q = q.or('email.ilike.%' + search + '%,paystack_reference.ilike.%' + search + '%');
-    q.then(function (res) {
-      var rows = (res && res.data) || [];
-      if (!rows.length) { body.innerHTML = '<tr><td colspan="7" class="cell-empty">No orders.</td></tr>'; return; }
-      body.innerHTML = rows.map(function (o) {
-        return '<tr>' +
-          '<td>' + new Date(o.created_at).toLocaleDateString() + '</td>' +
-          '<td>' + esc(o.paystack_reference) + '</td>' +
-          '<td>' + esc(o.email) + '</td>' +
-          '<td>' + money(o.usd_amount) + '</td>' +
-          '<td>' + esc(o.currency) + '</td>' +
-          '<td><span class="status-badge status-' + esc(o.status) + '">' + esc(o.status) + '</span></td>' +
-          '<td><span class="table-actions">' +
-            '<button type="button" data-status="' + esc(o.id) + '" data-current="' + esc(o.status) + '" aria-label="Change status"><i class="fa-solid fa-pen"></i></button>' +
-          '</span></td>' +
-        '</tr>';
-      }).join('');
-      qsa('[data-status]', body).forEach(function (b) {
-        b.addEventListener('click', function () {
-          var id = b.getAttribute('data-status');
-          var cur = b.getAttribute('data-current');
-          var next = window.prompt('New status: pending | success | failed', cur);
-          if (!next || ['pending','success','failed'].indexOf(next) === -1) return;
-          if (!window.confirm('Change order status to "' + next + '"?')) return;
-          client.from('orders').update({ status: next }).eq('id', id).then(function (r) {
-            if (r.error) { toast('Update failed.', 'error'); return; }
-            toast('Status updated.', 'success'); loadOrders();
-          });
-        });
-      });
-    });
-
-    ['orderStatusFilter','orderSearch'].forEach(function (id) {
-      var el = document.getElementById(id);
-      if (el && el.dataset.bound !== '1') {
-        el.dataset.bound = '1';
-        el.addEventListener('change', loadOrders);
-        if (el.tagName === 'INPUT') el.addEventListener('input', window.debounce(loadOrders, 260));
-      }
-    });
-  }
-
-  /* ================= Reviews ================= */
-
-  function loadReviews() {
-    var client = sb();
-    var body = document.getElementById('adminReviewsBody');
-    if (!client || !body) return;
-    var status = document.getElementById('reviewStatusFilter') ? document.getElementById('reviewStatusFilter').value : 'pending';
-    var q = client.from('reviews').select('id,name,rating,comment,status,created_at,products(title)').order('created_at', { ascending: false });
-    if (status) q = q.eq('status', status);
-    q.then(function (res) {
-      var rows = (res && res.data) || [];
-      if (!rows.length) { body.innerHTML = '<tr><td colspan="7" class="cell-empty">No reviews.</td></tr>'; return; }
-      body.innerHTML = rows.map(function (r) {
-        return '<tr>' +
-          '<td><input type="checkbox" data-select-review="' + esc(r.id) + '" aria-label="Select review"></td>' +
-          '<td>' + esc((r.products && r.products.title) || '—') + '</td>' +
-          '<td>' + esc(r.name) + '</td>' +
-          '<td>' + r.rating + '</td>' +
-          '<td>' + esc((r.comment || '').slice(0, 90)) + '</td>' +
-          '<td><span class="status-badge status-' + esc(r.status) + '">' + esc(r.status) + '</span></td>' +
-          '<td><span class="table-actions">' +
-            '<button type="button" data-approve="' + esc(r.id) + '" aria-label="Approve"><i class="fa-solid fa-check"></i></button>' +
-            '<button type="button" data-reject="' + esc(r.id) + '" aria-label="Reject"><i class="fa-solid fa-xmark"></i></button>' +
-          '</span></td>' +
-        '</tr>';
-      }).join('');
-      qsa('[data-approve]', body).forEach(function (b) {
-        b.addEventListener('click', function () { updateReview(b.getAttribute('data-approve'), 'approved'); });
-      });
-      qsa('[data-reject]', body).forEach(function (b) {
-        b.addEventListener('click', function () { updateReview(b.getAttribute('data-reject'), 'rejected'); });
-      });
-    });
-
-    var sel = document.getElementById('reviewStatusFilter');
-    if (sel && sel.dataset.bound !== '1') {
-      sel.dataset.bound = '1';
-      sel.addEventListener('change', loadReviews);
-    }
-    var bulk = document.getElementById('bulkApproveBtn');
-    if (bulk && bulk.dataset.bound !== '1') {
-      bulk.dataset.bound = '1';
-      bulk.addEventListener('click', function () {
-        var ids = qsa('[data-select-review]').filter(function (c) { return c.checked; }).map(function (c) { return c.getAttribute('data-select-review'); });
-        if (!ids.length) { toast('Select reviews first.', 'error'); return; }
-        sb().from('reviews').update({ status: 'approved' }).in('id', ids).then(function (r) {
-          if (r.error) { toast('Bulk approve failed.', 'error'); return; }
-          toast('Approved ' + ids.length + ' reviews.', 'success'); loadReviews();
-        });
-      });
-    }
-    var selAll = document.getElementById('reviewSelectAll');
-    if (selAll && selAll.dataset.bound !== '1') {
-      selAll.dataset.bound = '1';
-      selAll.addEventListener('change', function () {
-        qsa('[data-select-review]').forEach(function (c) { c.checked = selAll.checked; });
-      });
-    }
-  }
-
-  function updateReview(id, status) {
-    sb().from('reviews').update({ status: status }).eq('id', id).then(function (r) {
-      if (r.error) { toast('Update failed.', 'error'); return; }
-      toast('Review ' + status + '.', 'success'); loadReviews();
-    });
-  }
-
-  /* ================= Submissions ================= */
-
-  function loadSubmissions() {
-    var client = sb();
-    var body = document.getElementById('adminSubsBody');
-    if (!client || !body) return;
-    var status = document.getElementById('subStatusFilter') ? document.getElementById('subStatusFilter').value : 'pending';
-    var q = client.from('submissions').select('*').order('created_at', { ascending: false });
-    if (status) q = q.eq('status', status);
-    q.then(function (res) {
-      var rows = (res && res.data) || [];
-      if (!rows.length) { body.innerHTML = '<tr><td colspan="6" class="cell-empty">No submissions.</td></tr>'; return; }
-      body.innerHTML = rows.map(function (s) {
-        return '<tr>' +
-          '<td>' + new Date(s.created_at).toLocaleDateString() + '</td>' +
-          '<td>' + esc(s.designer_name || '') + '<br><span class="muted" style="font-size:.85em">' + esc(s.designer_email || '') + '</span></td>' +
-          '<td>' + esc(s.product_title || '') + '</td>' +
-          '<td>' + esc(s.category || '') + '</td>' +
-          '<td><span class="status-badge status-' + esc(s.status) + '">' + esc(s.status) + '</span></td>' +
-          '<td><span class="table-actions">' +
-            '<button type="button" data-detail="' + esc(s.id) + '" aria-label="View detail"><i class="fa-regular fa-eye"></i></button>' +
-            '<button type="button" data-copy="' + esc(s.designer_email || '') + '" aria-label="Copy email"><i class="fa-regular fa-copy"></i></button>' +
-            '<button type="button" data-accept="' + esc(s.id) + '" aria-label="Accept"><i class="fa-solid fa-check"></i></button>' +
-            '<button type="button" data-rej="' + esc(s.id) + '" aria-label="Reject"><i class="fa-solid fa-xmark"></i></button>' +
-          '</span></td>' +
-        '</tr>';
-      }).join('');
-      qsa('[data-accept]', body).forEach(function (b) { b.addEventListener('click', function () { updateSub(b.getAttribute('data-accept'), 'accepted'); }); });
-      qsa('[data-rej]', body).forEach(function (b) { b.addEventListener('click', function () { updateSub(b.getAttribute('data-rej'), 'rejected'); }); });
-      qsa('[data-copy]', body).forEach(function (b) {
-        b.addEventListener('click', function () {
-          if (navigator.clipboard && navigator.clipboard.writeText) {
-            navigator.clipboard.writeText(b.getAttribute('data-copy')).then(function () { toast('Email copied.', 'success'); });
-          }
-        });
-      });
-      qsa('[data-detail]', body).forEach(function (b) {
-        b.addEventListener('click', function () {
-          var id = b.getAttribute('data-detail');
-          client.from('submissions').select('*').eq('id', id).maybeSingle().then(function (rr) {
-            var s = rr && rr.data; if (!s) return;
-            window.alert('Designer: ' + (s.designer_name || '') + '\nEmail: ' + (s.designer_email || '') +
-              '\nProduct: ' + (s.product_title || '') + '\nCategory: ' + (s.category || '') +
-              '\nDemo: ' + (s.demo_url || '—') + '\nPortfolio: ' + (s.portfolio_url || '—') +
-              '\n\n' + (s.description || ''));
-          });
-        });
-      });
-    });
-    var sel = document.getElementById('subStatusFilter');
-    if (sel && sel.dataset.bound !== '1') { sel.dataset.bound = '1'; sel.addEventListener('change', loadSubmissions); }
-  }
-
-  function updateSub(id, status) {
-    sb().from('submissions').update({ status: status }).eq('id', id).then(function (r) {
-      if (r.error) { toast('Update failed.', 'error'); return; }
-      toast('Submission ' + status + '.', 'success'); loadSubmissions();
-    });
-  }
-
-  /* ================= Coupons ================= */
-
-  function loadCoupons() {
-    var client = sb();
-    var body = document.getElementById('adminCouponsBody');
-    if (!client || !body) return;
-    client.from('coupons').select('*').order('created_at', { ascending: false }).then(function (res) {
-      var rows = (res && res.data) || [];
-      if (!rows.length) { body.innerHTML = '<tr><td colspan="9" class="cell-empty">No coupons.</td></tr>'; return; }
-      body.innerHTML = rows.map(function (c) {
-        return '<tr>' +
-          '<td>' + esc(c.code) + '</td>' +
-          '<td>' + esc(c.type) + '</td>' +
-          '<td>' + (c.type === 'percent' ? c.value + '%' : money(c.value)) + '</td>' +
-          '<td>' + money(c.min_subtotal) + '</td>' +
-          '<td>' + (c.used_count || 0) + '</td>' +
-          '<td>' + (c.max_uses != null ? c.max_uses : '∞') + '</td>' +
-          '<td>' + (c.expires_at ? new Date(c.expires_at).toLocaleDateString() : '—') + '</td>' +
-          '<td>' + (c.is_active ? '<i class="fa-solid fa-check" style="color:var(--success)"></i>' : '<i class="fa-solid fa-xmark" style="color:var(--danger)"></i>') + '</td>' +
-          '<td><span class="table-actions">' +
-            '<button type="button" data-cedit="' + esc(c.id) + '" aria-label="Edit"><i class="fa-solid fa-pen"></i></button>' +
-            '<button type="button" data-ctoggle="' + esc(c.id) + '" data-active="' + (c.is_active ? '1' : '0') + '" aria-label="Toggle"><i class="fa-solid fa-power-off"></i></button>' +
-            '<button type="button" data-cdel="' + esc(c.id) + '" aria-label="Delete"><i class="fa-solid fa-trash"></i></button>' +
-          '</span></td>' +
-        '</tr>';
-      }).join('');
-
-      qsa('[data-cedit]', body).forEach(function (b) {
-        b.addEventListener('click', function () { editCoupon(b.getAttribute('data-cedit')); });
-      });
-      qsa('[data-ctoggle]', body).forEach(function (b) {
-        b.addEventListener('click', function () {
-          var id = b.getAttribute('data-ctoggle');
-          var active = b.getAttribute('data-active') === '1';
-          client.from('coupons').update({ is_active: !active }).eq('id', id).then(function () { loadCoupons(); });
-        });
-      });
-      qsa('[data-cdel]', body).forEach(function (b) {
-        b.addEventListener('click', function () {
-          if (!confirmTyped('Delete this coupon?', 'DELETE')) return;
-          client.from('coupons').delete().eq('id', b.getAttribute('data-cdel')).then(function () { loadCoupons(); });
-        });
-      });
-    });
-    var newBtn = document.getElementById('newCouponBtn');
-    if (newBtn && newBtn.dataset.bound !== '1') {
-      newBtn.dataset.bound = '1';
-      newBtn.addEventListener('click', function () { editCoupon(null); });
-    }
-  }
-
-  function editCoupon(id) {
-    var client = sb();
-    if (!client) return;
-    var prep = id ? client.from('coupons').select('*').eq('id', id).maybeSingle() : Promise.resolve({ data: {} });
-    prep.then(function (res) {
-      var c = (res && res.data) || {};
-      var code = window.prompt('Code', c.code || '');
-      if (code === null) return;
-      var type = window.prompt('Type (percent | fixed)', c.type || 'percent');
-      if (type === null) return;
-      var value = window.prompt('Value', c.value != null ? String(c.value) : '');
-      if (value === null) return;
-      var min = window.prompt('Min subtotal (USD)', c.min_subtotal != null ? String(c.min_subtotal) : '0');
-      var maxUses = window.prompt('Max uses (empty = unlimited)', c.max_uses != null ? String(c.max_uses) : '');
-      var expires = window.prompt('Expires at (ISO date, empty for none)', c.expires_at || '');
-      var payload = {
-        code: String(code).trim().toUpperCase(),
-        type: type === 'fixed' ? 'fixed' : 'percent',
-        value: parseFloat(value) || 0,
-        min_subtotal: parseFloat(min) || 0,
-        max_uses: maxUses ? parseInt(maxUses, 10) : null,
-        expires_at: expires ? new Date(expires).toISOString() : null
-      };
-      if (id) client.from('coupons').update(payload).eq('id', id).then(function () { toast('Coupon updated.', 'success'); loadCoupons(); });
-      else client.from('coupons').insert(payload).then(function (r) {
-        if (r.error) { toast('Create failed: ' + r.error.message, 'error'); return; }
-        toast('Coupon created.', 'success'); loadCoupons();
-      });
-    });
-  }
-
-  /* ================= Blog ================= */
-
-  function loadBlog() {
-    var client = sb();
-    var body = document.getElementById('adminBlogBody');
-    if (!client || !body) return;
-    client.from('blog_posts').select('id,title,slug,status,views_count,updated_at').order('updated_at', { ascending: false })
-      .then(function (res) {
-        var rows = (res && res.data) || [];
-        if (!rows.length) { body.innerHTML = '<tr><td colspan="6" class="cell-empty">No posts.</td></tr>'; return; }
-        body.innerHTML = rows.map(function (p) {
-          return '<tr>' +
-            '<td>' + esc(p.title) + '</td>' +
-            '<td>' + esc(p.slug) + '</td>' +
-            '<td><span class="status-badge status-' + (p.status === 'published' ? 'success' : 'pending') + '">' + esc(p.status) + '</span></td>' +
-            '<td>' + (p.views_count || 0) + '</td>' +
-            '<td>' + new Date(p.updated_at).toLocaleDateString() + '</td>' +
-            '<td><span class="table-actions">' +
-              '<button type="button" data-bview="' + esc(p.slug) + '" aria-label="View"><i class="fa-solid fa-arrow-up-right-from-square"></i></button>' +
-              '<button type="button" data-bedit="' + esc(p.id) + '" aria-label="Edit"><i class="fa-solid fa-pen"></i></button>' +
-              '<button type="button" data-bdel="' + esc(p.id) + '" aria-label="Delete"><i class="fa-solid fa-trash"></i></button>' +
-            '</span></td>' +
-          '</tr>';
-        }).join('');
-        qsa('[data-bview]', body).forEach(function (b) {
-          b.addEventListener('click', function () { window.open('blog.html?slug=' + encodeURIComponent(b.getAttribute('data-bview')), '_blank', 'noopener'); });
-        });
-        qsa('[data-bedit]', body).forEach(function (b) {
-          b.addEventListener('click', function () { editPost(b.getAttribute('data-bedit')); });
-        });
-        qsa('[data-bdel]', body).forEach(function (b) {
-          b.addEventListener('click', function () {
-            if (!confirmTyped('Delete this post?', 'DELETE')) return;
-            client.from('blog_posts').delete().eq('id', b.getAttribute('data-bdel')).then(function () { loadBlog(); });
-          });
-        });
-      });
-    var newBtn = document.getElementById('newPostBtn');
-    if (newBtn && newBtn.dataset.bound !== '1') {
-      newBtn.dataset.bound = '1';
-      newBtn.addEventListener('click', function () { editPost(null); });
-    }
-  }
-
-  function editPost(id) {
-    var client = sb();
-    if (!client) return;
-    var prep = id ? client.from('blog_posts').select('*').eq('id', id).maybeSingle() : Promise.resolve({ data: {} });
-    prep.then(function (res) {
-      var p = (res && res.data) || {};
-      var title = window.prompt('Title', p.title || '');
-      if (title === null) return;
-      var slug = window.prompt('Slug', p.slug || (window.mittely.slugify ? window.mittely.slugify(title) : ''));
-      if (slug === null) return;
-      var excerpt = window.prompt('Excerpt', p.excerpt || '');
-      var content = window.prompt('Content (HTML allowed, sanitized on render)', p.content || '');
-      var cover = window.prompt('Cover image URL', p.cover_image || '');
-      var tags = window.prompt('Tags (comma separated)', p.tags || '');
-      var status = window.prompt('Status (draft | published)', p.status || 'draft');
-      var payload = {
-        title: title, slug: slug, excerpt: excerpt || '',
-        content: content || '', cover_image: cover || '',
-        tags: tags || '', status: status === 'published' ? 'published' : 'draft'
-      };
-      if (id) client.from('blog_posts').update(payload).eq('id', id).then(function () { toast('Post updated.', 'success'); loadBlog(); });
-      else client.from('blog_posts').insert(payload).then(function (r) {
-        if (r.error) { toast('Create failed: ' + r.error.message, 'error'); return; }
-        toast('Post created.', 'success'); loadBlog();
-      });
-    });
-  }
-
-  /* ================= Users ================= */
-
-  function loadUsers() {
-    var client = sb();
-    var body = document.getElementById('adminUsersBody');
-    if (!client || !body) return;
-    body.innerHTML = '<tr><td colspan="7" class="cell-empty">Loading…</td></tr>';
-    client.rpc('admin_list_users', {
-      p_search: state.users.search || null,
-      p_limit: state.users.pageSize,
-      p_offset: (state.users.page - 1) * state.users.pageSize
-    }).then(function (res) {
-      var rows = (res && res.data) || [];
-      if (!rows.length) { body.innerHTML = '<tr><td colspan="7" class="cell-empty">No users.</td></tr>'; return; }
-      body.innerHTML = rows.map(function (u) {
-        return '<tr>' +
-          '<td>' + esc(u.name || '—') + '</td>' +
-          '<td>' + esc(u.email) + '</td>' +
-          '<td>' + (u.orders_count || 0) + '</td>' +
-          '<td>' + money(u.total_spent || 0) + '</td>' +
-          '<td>' + (u.downloads || 0) + '</td>' +
-          '<td>' + money(u.wallet_balance || 0) + '</td>' +
-          '<td><span class="table-actions">' +
-            '<button type="button" data-udetail="' + esc(u.email) + '" aria-label="Details"><i class="fa-regular fa-eye"></i></button>' +
-            '<button type="button" data-uadjust="' + esc(u.email) + '" aria-label="Adjust balance"><i class="fa-solid fa-wallet"></i></button>' +
-          '</span></td>' +
-        '</tr>';
-      }).join('');
-
-      qsa('[data-udetail]', body).forEach(function (b) {
-        b.addEventListener('click', function () { showUserDetail(b.getAttribute('data-udetail')); });
-      });
-      qsa('[data-uadjust]', body).forEach(function (b) {
-        b.addEventListener('click', function () { adjustBalance(b.getAttribute('data-uadjust')); });
-      });
-    });
-
-    var search = document.getElementById('userSearch');
-    if (search && search.dataset.bound !== '1') {
-      search.dataset.bound = '1';
-      search.addEventListener('input', window.debounce(function () {
-        state.users.search = search.value.trim();
-        state.users.page = 1;
-        loadUsers();
-      }, 260));
-    }
-  }
-
-  function showUserDetail(email) {
-    var client = sb();
-    if (!client) return;
-    Promise.all([
-      client.from('orders').select('paystack_reference,usd_amount,status,created_at').eq('email', email).order('created_at', { ascending: false }).limit(10),
-      client.from('wallet_transactions').select('type,amount,note,created_at').eq('email', email).order('created_at', { ascending: false }).limit(15),
-      client.from('activity_log').select('event,meta,created_at').eq('email', email).order('created_at', { ascending: false }).limit(15)
-    ]).then(function (res) {
-      var orders = (res[0] && res[0].data) || [];
-      var wallet = (res[1] && res[1].data) || [];
-      var activity = (res[2] && res[2].data) || [];
-      var lines = [];
-      lines.push('=== Orders (' + orders.length + ') ===');
-      orders.forEach(function (o) { lines.push(new Date(o.created_at).toLocaleDateString() + ' · ' + o.paystack_reference + ' · ' + money(o.usd_amount) + ' · ' + o.status); });
-      lines.push('');
-      lines.push('=== Wallet (' + wallet.length + ') ===');
-      wallet.forEach(function (w) { lines.push(new Date(w.created_at).toLocaleDateString() + ' · ' + w.type + ' · ' + money(w.amount) + ' · ' + (w.note || '')); });
-      lines.push('');
-      lines.push('=== Activity (' + activity.length + ') ===');
-      activity.forEach(function (a) { lines.push(new Date(a.created_at).toLocaleDateString() + ' · ' + a.event); });
-      window.alert(email + '\n\n' + lines.join('\n'));
-    });
-  }
-
-  function adjustBalance(email) {
-    var amount = window.prompt('Adjust balance for ' + email + ' (positive to add, negative to deduct):');
-    if (amount === null) return;
-    var num = parseFloat(amount);
-    if (!isFinite(num) || num === 0) { toast('Invalid amount.', 'error'); return; }
-    var note = window.prompt('Required note:');
-    if (!note) { toast('Note is required.', 'error'); return; }
-    sb().rpc('credit_wallet', { p_email: email, p_amount: num, p_type: 'adjustment', p_note: note }).then(function (r) {
-      if (r.error) { toast('Adjust failed.', 'error'); return; }
-      toast('Balance adjusted.', 'success'); loadUsers();
-    });
-  }
-
-  /* ================= Activity ================= */
-
-  function loadActivity() {
-    var client = sb();
-    var body = document.getElementById('adminActivityBody');
-    if (!client || !body) return;
-    var q = client.from('activity_log')
-      .select('email,event,meta,created_at', { count: 'exact' })
-      .order('created_at', { ascending: false })
-      .range((state.activity.page - 1) * state.activity.pageSize, state.activity.page * state.activity.pageSize - 1);
-    if (state.activity.event) q = q.eq('event', state.activity.event);
-    q.then(function (res) {
-      var rows = (res && res.data) || [];
-      if (!rows.length) { body.innerHTML = '<tr><td colspan="4" class="cell-empty">No activity.</td></tr>'; return; }
-      body.innerHTML = rows.map(function (r) {
-        return '<tr>' +
-          '<td>' + new Date(r.created_at).toLocaleString() + '</td>' +
-          '<td>' + esc(r.email) + '</td>' +
-          '<td>' + esc(r.event) + '</td>' +
-          '<td>' + esc(JSON.stringify(r.meta || {})) + '</td>' +
-        '</tr>';
-      }).join('');
-    });
-    var chips = document.getElementById('activityChips');
-    if (chips && chips.dataset.bound !== '1') {
-      chips.dataset.bound = '1';
-      qsa('button', chips).forEach(function (b) {
-        b.addEventListener('click', function () {
-          qsa('button', chips).forEach(function (x) { x.classList.remove('is-active'); });
-          b.classList.add('is-active');
-          state.activity.event = b.getAttribute('data-event') || '';
-          state.activity.page = 1;
-          loadActivity();
-        });
-      });
-    }
-  }
-
-  /* ================= Payouts ================= */
-
-  function loadPayouts() {
-    var client = sb();
-    if (!client) return;
-    client.from('payout_requests').select('*').eq('status', 'pending').order('created_at')
-      .then(function (res) {
-        var body = document.getElementById('adminPayoutsPendingBody');
-        if (!body) return;
-        var rows = (res && res.data) || [];
-        if (!rows.length) { body.innerHTML = '<tr><td colspan="5" class="cell-empty">No pending payouts.</td></tr>'; return; }
-        body.innerHTML = rows.map(function (p) {
-          return '<tr>' +
-            '<td>' + new Date(p.created_at).toLocaleDateString() + '</td>' +
-            '<td>' + esc(p.email) + '</td>' +
-            '<td>' + money(p.amount) + '</td>' +
-            '<td>' + esc(p.note || '') + '</td>' +
-            '<td><span class="table-actions">' +
-              '<button type="button" data-ppaid="' + esc(p.id) + '" aria-label="Mark paid"><i class="fa-solid fa-check"></i></button>' +
-              '<button type="button" data-prej="' + esc(p.id) + '" aria-label="Reject"><i class="fa-solid fa-xmark"></i></button>' +
-            '</span></td>' +
-          '</tr>';
-        }).join('');
-        qsa('[data-ppaid]', body).forEach(function (b) {
-          b.addEventListener('click', function () { handlePayout(b.getAttribute('data-ppaid'), 'paid'); });
-        });
-        qsa('[data-prej]', body).forEach(function (b) {
-          b.addEventListener('click', function () { handlePayout(b.getAttribute('data-prej'), 'rejected'); });
-        });
-      });
-
-    client.from('payout_requests').select('*').neq('status', 'pending').order('handled_at', { ascending: false }).limit(50)
-      .then(function (res) {
-        var body = document.getElementById('adminPayoutsHistoryBody');
-        if (!body) return;
-        var rows = (res && res.data) || [];
-        if (!rows.length) { body.innerHTML = '<tr><td colspan="5" class="cell-empty">No payout history.</td></tr>'; return; }
-        body.innerHTML = rows.map(function (p) {
-          return '<tr>' +
-            '<td>' + new Date(p.created_at).toLocaleDateString() + '</td>' +
-            '<td>' + esc(p.email) + '</td>' +
-            '<td>' + money(p.amount) + '</td>' +
-            '<td><span class="status-badge status-' + esc(p.status) + '">' + esc(p.status) + '</span></td>' +
-            '<td>' + esc(p.note || '') + '</td>' +
-          '</tr>';
-        }).join('');
-      });
-  }
-
-  function handlePayout(id, action) {
-    var note = window.prompt('Note (required for reject, optional for paid)', '');
-    if (action === 'rejected' && !note) { toast('Note required for reject.', 'error'); return; }
-    sb().rpc('admin_handle_payout', { p_id: id, p_action: action, p_note: note || null }).then(function (r) {
-      if (r.error) { toast('Failed: ' + r.error.message, 'error'); return; }
-      toast('Payout ' + action + '.', 'success'); loadPayouts();
-    });
-  }
-
-  /* ================= Newsletter ================= */
-
-  function loadNewsletter() {
-    var client = sb();
-    var body = document.getElementById('adminNewsletterBody');
-    if (!client || !body) return;
-    client.from('newsletter').select('email,created_at').order('created_at', { ascending: false }).then(function (res) {
-      var rows = (res && res.data) || [];
-      var count = document.getElementById('newsletterCount');
-      if (count) count.textContent = rows.length + ' subscribers';
-      if (!rows.length) { body.innerHTML = '<tr><td colspan="3" class="cell-empty">No subscribers yet.</td></tr>'; return; }
-      body.innerHTML = rows.map(function (r) {
-        return '<tr>' +
-          '<td>' + esc(r.email) + '</td>' +
-          '<td>' + new Date(r.created_at).toLocaleDateString() + '</td>' +
-          '<td><span class="table-actions"><button type="button" data-ndel="' + esc(r.email) + '" aria-label="Delete"><i class="fa-solid fa-trash"></i></button></span></td>' +
-        '</tr>';
-      }).join('');
-      qsa('[data-ndel]', body).forEach(function (b) {
-        b.addEventListener('click', function () {
-          if (!window.confirm('Remove this subscriber?')) return;
-          client.from('newsletter').delete().eq('email', b.getAttribute('data-ndel')).then(function () { loadNewsletter(); });
-        });
-      });
-    });
-
-    var exp = document.getElementById('exportNewsletterBtn');
-    if (exp && exp.dataset.bound !== '1') {
-      exp.dataset.bound = '1';
-      exp.addEventListener('click', function () {
-        client.from('newsletter').select('email,created_at').then(function (res) {
-          var rows = (res && res.data) || [];
-          var csv = 'email,created_at\n' + rows.map(function (r) { return '"' + r.email + '","' + r.created_at + '"'; }).join('\n');
-          var blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
-          var a = document.createElement('a');
-          a.href = URL.createObjectURL(blob);
-          a.download = 'mittely-newsletter.csv';
-          a.click();
-          URL.revokeObjectURL(a.href);
-        });
-      });
-    }
-  }
-
-  /* ================= Settings ================= */
-
-  function loadSettings() {
-    var client = sb();
-    if (!client) return;
-    client.from('settings').select('skey,svalue').then(function (res) {
-      var map = {};
-      (res && res.data || []).forEach(function (r) { map[r.skey] = r.svalue; });
-      state.settings = map;
-      function set(id, v) { var el = document.getElementById(id); if (el) el.value = v || ''; }
-      set('setHotSale', map.hot_sale_mode || 'off');
-      set('setHotSaleEnds', map.hot_sale_ends_at || '');
-      set('setBf', map.black_friday_mode || 'off');
-      set('setAnnouncement', map.announcement_bar || '');
-      set('setHero', map.hero_headline || '');
-      set('setFx', map.fx_fallback_rate || '15.50');
-      set('setGithub', map.github_url || '');
-      set('setX', map.x_url || '');
-      set('setTelegram', map.telegram_url || '');
-      set('setInstagram', map.instagram_url || '');
-      set('setLinkedin', map.linkedin_url || '');
-      set('setYoutube', map.youtube_url || '');
-      set('setDiscord', map.discord_url || '');
-    });
-
-    var form = document.getElementById('settingsForm');
-    if (form && form.dataset.bound !== '1') {
-      form.dataset.bound = '1';
-      form.addEventListener('submit', function (e) {
-        e.preventDefault();
-        var updates = [
-          ['hot_sale_mode', val('setHotSale')],
-          ['hot_sale_ends_at', val('setHotSaleEnds')],
-          ['black_friday_mode', val('setBf')],
-          ['announcement_bar', val('setAnnouncement')],
-          ['hero_headline', val('setHero')],
-          ['fx_fallback_rate', val('setFx') || '15.50'],
-          ['github_url', val('setGithub')],
-          ['x_url', val('setX')],
-          ['telegram_url', val('setTelegram')],
-          ['instagram_url', val('setInstagram')],
-          ['linkedin_url', val('setLinkedin')],
-          ['youtube_url', val('setYoutube')],
-          ['discord_url', val('setDiscord')]
-        ].map(function (pair) { return { skey: pair[0], svalue: pair[1] }; });
-
-        client.from('settings').upsert(updates, { onConflict: 'skey' }).then(function (r) {
-          if (r.error) { toast('Save failed: ' + r.error.message, 'error'); return; }
-          var ok = document.getElementById('settingsSaved');
-          if (ok) { ok.hidden = false; setTimeout(function () { ok.hidden = true; }, 2500); }
-          toast('Settings saved.', 'success');
-        });
-      });
-    }
-
-    function val(id) { var el = document.getElementById(id); return el ? el.value : ''; }
-  }
-
-  /* ================= Admins ================= */
-
-  function loadAdmins() {
-    var client = sb();
-    var body = document.getElementById('adminAdminsBody');
-    if (!client || !body) return;
-    client.from('admin_users').select('email').order('email').then(function (res) {
-      var rows = (res && res.data) || [];
-      var owner = window.MITTELY_CONFIG && window.MITTELY_CONFIG.ADMIN_EMAIL;
-      body.innerHTML = rows.map(function (a) {
-        var isOwner = a.email === owner;
-        return '<tr>' +
-          '<td>' + esc(a.email) + (isOwner ? ' <span class="badge badge-best">Owner</span>' : '') + '</td>' +
-          '<td>' + (isOwner ? '<span class="muted">Protected</span>' :
-            '<span class="table-actions"><button type="button" data-adel="' + esc(a.email) + '" aria-label="Remove"><i class="fa-solid fa-trash"></i></button></span>') + '</td>' +
-        '</tr>';
-      }).join('');
-      qsa('[data-adel]', body).forEach(function (b) {
-        b.addEventListener('click', function () {
-          if (!window.confirm('Remove this admin?')) return;
-          client.from('admin_users').delete().eq('email', b.getAttribute('data-adel')).then(function (r) {
-            if (r.error) { toast('Remove failed.', 'error'); return; }
-            toast('Admin removed.', 'success'); loadAdmins();
-          });
-        });
-      });
-    });
-
-    var form = document.getElementById('addAdminForm');
-    if (form && form.dataset.bound !== '1') {
-      form.dataset.bound = '1';
-      form.addEventListener('submit', function (e) {
-        e.preventDefault();
-        var em = document.getElementById('newAdminEmail').value.trim().toLowerCase();
-        if (!em) return;
-        client.from('admin_users').insert({ email: em }).then(function (r) {
-          if (r.error) { toast('Add failed: ' + r.error.message, 'error'); return; }
-          document.getElementById('newAdminEmail').value = '';
-          toast('Admin added.', 'success'); loadAdmins();
-        });
-      });
-    }
-  }
-
-  /* ================= Auth bootstrap ================= */
-
-  function checkAccess() {
-    var user = window.mittelyAuth && window.mittelyAuth.getUser && window.mittelyAuth.getUser();
-    if (!user) { showGate('gate'); return; }
-    state.user = user;
-    state.email = user.email;
-
-    var isAdmin = window.mittelyAuth.isAdmin && window.mittelyAuth.isAdmin();
-    if (isAdmin) {
-      state.isAdmin = true;
-      showGate('shell');
-      hydrateAdminUser();
-      bindNav();
-      setSection('dashboard');
       return;
     }
 
-    // Fallback server check if the session just landed.
-    var client = sb();
-    if (!client) { showGate('forbidden'); return; }
-    client.rpc('is_admin_rpc').then(function (res) {
-      if (res && !res.error && res.data === true) {
-        state.isAdmin = true;
-        showGate('shell');
-        hydrateAdminUser();
-        bindNav();
-        setSection('dashboard');
-      } else {
-        showGate('forbidden');
+    if (type === 'status') {
+      var counts = { success: 0, pending: 0, failed: 0 };
+      orders.forEach(function (o) { if (counts[o.status] !== undefined) counts[o.status]++; });
+      var total = Math.max(1, counts.success + counts.pending + counts.failed);
+      if (summary) summary.textContent = total + ' total';
+      var colors = { success: '#16A34A', pending: '#D97706', failed: '#DC2626' };
+      var html = '<div style="display:flex;flex-direction:column;gap:10px;width:100%;">';
+      Object.keys(counts).forEach(function (k) {
+        var pct = (counts[k] / total) * 100;
+        html += '<div><div style="display:flex;justify-content:space-between;font-size:0.875rem;margin-bottom:4px;"><span>' + k + '</span><span>' + counts[k] + '</span></div><div style="height:10px;background:var(--card-alt);border-radius:6px;overflow:hidden;"><div style="width:' + pct + '%;height:100%;background:' + colors[k] + ';"></div></div></div>';
+      });
+      html += '</div>';
+      canvas.innerHTML = html;
+      return;
+    }
+
+    if (type === 'top') {
+      var tops = topProducts || [];
+      if (summary) summary.textContent = tops.length + ' products';
+      var maxSales = Math.max.apply(null, tops.map(function (p) { return p.sales_count || 0; }).concat([1]));
+      canvas.innerHTML = tops.map(function (p) {
+        var pct = ((p.sales_count || 0) / maxSales) * 100;
+        return '<div style="margin-bottom:12px;"><div style="display:flex;justify-content:space-between;font-size:0.875rem;margin-bottom:4px;"><span>' + esc(p.title) + '</span><span>' + (p.sales_count || 0) + '</span></div>' +
+          '<div style="height:10px;background:var(--card-alt);border-radius:6px;overflow:hidden;"><div style="width:' + pct + '%;height:100%;background:var(--lime);"></div></div></div>';
+      }).join('') || '<div>No products</div>';
+      return;
+    }
+  }
+
+  /* ---------- Products ---------- */
+
+  async function loadProducts() {
+    var tbody = document.getElementById('adminProductsTable');
+    if (!tbody) return;
+    var res = await window.MITTELY.supabase.from('products').select('*').order('created_at', { ascending: false });
+    var data = (res && res.data) || [];
+    tbody.innerHTML = data.map(function (p) {
+      var flags = [];
+      if (p.is_published) flags.push('fa-eye');
+      if (p.is_free) flags.push('fa-gift');
+      if (p.is_hot_sale) flags.push('fa-star');
+      if (p.is_black_friday) flags.push('fa-heart');
+      if (p.is_featured) flags.push('fa-sparkles');
+      return '<tr>' +
+        '<td>' + esc(p.title) + '</td>' +
+        '<td>' + esc(p.category) + '</td>' +
+        '<td>' + money(p.price) + '</td>' +
+        '<td>' + (p.is_published ? 'Published' : 'Draft') + '</td>' +
+        '<td>' + flags.map(function (f) { return '<i class="fa-solid ' + f + '" style="color:var(--highlight);margin-right:4px;"></i>'; }).join('') + '</td>' +
+        '<td><div class="table-actions">' +
+          '<button data-edit="' + esc(p.id) + '" aria-label="Edit"><i class="fa-solid fa-pen"></i></button>' +
+          '<button data-duplicate="' + esc(p.id) + '" aria-label="Duplicate"><i class="fa-solid fa-copy"></i></button>' +
+          '<button data-toggle-published="' + esc(p.id) + '" aria-label="Toggle published"><i class="fa-solid fa-eye"></i></button>' +
+          '<button class="danger" data-delete="' + esc(p.id) + '" aria-label="Delete"><i class="fa-solid fa-trash"></i></button>' +
+        '</div></td></tr>';
+    }).join('') || '<tr><td colspan="6">No products</td></tr>';
+
+    if (!tbody.dataset.bound) {
+      tbody.dataset.bound = '1';
+      tbody.addEventListener('click', function (e) {
+        var btn = e.target.closest('button');
+        if (!btn) return;
+        if (btn.hasAttribute('data-edit')) openProductModal(btn.getAttribute('data-edit'));
+        else if (btn.hasAttribute('data-duplicate')) duplicateProduct(btn.getAttribute('data-duplicate'));
+        else if (btn.hasAttribute('data-toggle-published')) toggleProductPublished(btn.getAttribute('data-toggle-published'));
+        else if (btn.hasAttribute('data-delete')) confirmDeleteProduct(btn.getAttribute('data-delete'));
+      });
+    }
+
+    var newBtn = document.getElementById('newProductBtn');
+    if (newBtn && !newBtn.dataset.bound) {
+      newBtn.dataset.bound = '1';
+      newBtn.addEventListener('click', function () { openProductModal(null); });
+    }
+  }
+
+  async function openProductModal(id) {
+    var title = document.getElementById('adminEntityTitle');
+    var body = document.getElementById('adminEntityBody');
+    var footer = document.getElementById('adminEntityFooter');
+    if (!body || !footer) return;
+    var p = null;
+    if (id) {
+      var res = await window.MITTELY.supabase.from('products').select('*').eq('id', id).maybeSingle();
+      p = res && res.data;
+    }
+    if (title) title.textContent = p ? 'Edit product' : 'New product';
+    body.innerHTML = productFormHtml(p || {});
+    footer.innerHTML = '<button class="btn btn-outline" id="entityCancel">Cancel</button><button class="btn btn-primary" id="entitySave">Save</button>';
+    openModal('adminEntityModal');
+    document.getElementById('entityCancel').addEventListener('click', function () { closeModal('adminEntityModal'); });
+    document.getElementById('entitySave').addEventListener('click', function () { saveProduct(p ? p.id : null); });
+  }
+
+  function productFormHtml(p) {
+    function val(k, d) { return p[k] != null ? p[k] : (d != null ? d : ''); }
+    return '' +
+      '<div class="form-group"><label>Title</label><input type="text" id="f_title" value="' + esc(val('title')) + '"></div>' +
+      '<div class="form-group"><label>Slug</label><input type="text" id="f_slug" value="' + esc(val('slug')) + '" placeholder="auto-slug"></div>' +
+      '<div class="form-group"><label>Category</label><select id="f_category">' +
+        ['ui-kits', 'dashboards', 'landing-pages', 'ecommerce', 'portfolios', 'mobile-apps'].map(function (c) {
+          return '<option value="' + c + '"' + (val('category') === c ? ' selected' : '') + '>' + c + '</option>';
+        }).join('') +
+      '</select></div>' +
+      '<div class="form-group"><label>Price (USD)</label><input type="number" step="0.01" id="f_price" value="' + esc(val('price', 0)) + '"></div>' +
+      '<div class="form-group"><label>Sale price (USD)</label><input type="number" step="0.01" id="f_sale_price" value="' + esc(val('sale_price')) + '"></div>' +
+      '<div class="form-group"><label>Short description</label><input type="text" id="f_short_desc" value="' + esc(val('short_desc')) + '"></div>' +
+      '<div class="form-group"><label>Long description</label><textarea id="f_long_desc" rows="4">' + esc(val('long_desc')) + '</textarea></div>' +
+      '<div class="form-group"><label>Image URL</label><input type="url" id="f_image_url" value="' + esc(val('image_url')) + '"></div>' +
+      '<div class="form-group"><label>Demo URL</label><input type="url" id="f_demo_url" value="' + esc(val('demo_url')) + '"></div>' +
+      '<div class="form-group"><label>Preview embed URL</label><input type="url" id="f_preview_embed_url" value="' + esc(val('preview_embed_url')) + '"></div>' +
+      '<div class="form-group"><label>Version</label><input type="text" id="f_version" value="' + esc(val('version', '1.0')) + '"></div>' +
+      '<div class="form-group"><label>Changelog</label><textarea id="f_changelog" rows="3">' + esc(val('changelog')) + '</textarea></div>' +
+      '<div class="form-group"><label><input type="checkbox" id="f_is_published"' + (p.is_published !== false ? ' checked' : '') + '> Published</label></div>' +
+      '<div class="form-group"><label><input type="checkbox" id="f_is_free"' + (p.is_free ? ' checked' : '') + '> Free</label></div>' +
+      '<div class="form-group"><label><input type="checkbox" id="f_is_hot_sale"' + (p.is_hot_sale ? ' checked' : '') + '> Hot Sale</label></div>' +
+      '<div class="form-group"><label><input type="checkbox" id="f_is_black_friday"' + (p.is_black_friday ? ' checked' : '') + '> Black Friday</label></div>' +
+      '<div class="form-group"><label><input type="checkbox" id="f_is_featured"' + (p.is_featured ? ' checked' : '') + '> Featured</label></div>';
+  }
+
+  async function saveProduct(id) {
+    var btn = document.getElementById('entitySave');
+    setLoading(btn, true);
+    try {
+      var payload = {
+        title: val('f_title'),
+        slug: val('f_slug') || slugify(val('f_title')),
+        category: val('f_category'),
+        price: parseFloat(val('f_price')) || 0,
+        sale_price: val('f_sale_price') ? parseFloat(val('f_sale_price')) : null,
+        short_desc: val('f_short_desc'),
+        long_desc: val('f_long_desc'),
+        image_url: val('f_image_url'),
+        demo_url: val('f_demo_url'),
+        preview_embed_url: val('f_preview_embed_url'),
+        version: val('f_version') || '1.0',
+        changelog: val('f_changelog'),
+        is_published: checked('f_is_published'),
+        is_free: checked('f_is_free'),
+        is_hot_sale: checked('f_is_hot_sale'),
+        is_black_friday: checked('f_is_black_friday'),
+        is_featured: checked('f_is_featured'),
+        updated_at: new Date().toISOString()
+      };
+      if (!payload.title) throw new Error('Title required');
+      var res = id
+        ? await window.MITTELY.supabase.from('products').update(payload).eq('id', id)
+        : await window.MITTELY.supabase.from('products').insert(payload);
+      if (res && res.error) throw res.error;
+      toast('Product saved', 'success');
+      closeModal('adminEntityModal');
+      loadProducts();
+    } catch (e) {
+      toast((e && e.message) || 'Save failed', 'error');
+    } finally {
+      setLoading(btn, false);
+    }
+  }
+
+  function slugify(s) {
+    return String(s || '').toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+  }
+
+  function val(id) { var el = document.getElementById(id); return el ? (el.type === 'checkbox' ? el.checked : el.value) : ''; }
+  function checked(id) { var el = document.getElementById(id); return el ? !!el.checked : false; }
+
+  async function duplicateProduct(id) {
+    try {
+      var res = await window.MITTELY.supabase.from('products').select('*').eq('id', id).maybeSingle();
+      var p = res && res.data;
+      if (!p) return;
+      delete p.id;
+      p.title = p.title + ' (copy)';
+      p.slug = p.slug + '-copy-' + Date.now();
+      p.is_published = false;
+      var ins = await window.MITTELY.supabase.from('products').insert(p);
+      if (ins && ins.error) throw ins.error;
+      toast('Product duplicated', 'success');
+      loadProducts();
+    } catch (e) { toast('Duplicate failed', 'error'); }
+  }
+
+  async function toggleProductPublished(id) {
+    try {
+      var res = await window.MITTELY.supabase.from('products').select('is_published').eq('id', id).maybeSingle();
+      var cur = res && res.data ? res.data.is_published : true;
+      await window.MITTELY.supabase.from('products').update({ is_published: !cur }).eq('id', id);
+      loadProducts();
+    } catch (e) { toast('Toggle failed', 'error'); }
+  }
+
+  async function confirmDeleteProduct(id) {
+    openConfirm('Delete this product? Type the product title to confirm.', async function (typed) {
+      try {
+        var res = await window.MITTELY.supabase.from('products').select('title').eq('id', id).maybeSingle();
+        var t = res && res.data ? res.data.title : '';
+        if (!typed || typed !== t) { toast('Title does not match', 'error'); return; }
+        var del = await window.MITTELY.supabase.from('products').delete().eq('id', id);
+        if (del && del.error) throw del.error;
+        toast('Product deleted', 'success');
+        loadProducts();
+      } catch (e) { toast('Delete failed', 'error'); }
+    });
+  }
+
+  /* ---------- Orders ---------- */
+
+  async function loadOrders() {
+    var tbody = document.getElementById('adminOrdersTable');
+    var search = document.getElementById('adminOrderSearch');
+    var status = document.getElementById('adminOrderStatus');
+    if (!tbody) return;
+
+    async function fetchList() {
+      var q = window.MITTELY.supabase.from('orders').select('*').order('created_at', { ascending: false }).limit(100);
+      if (status && status.value) q = q.eq('status', status.value);
+      if (search && search.value.trim()) {
+        var s = search.value.trim();
+        q = q.or('email.ilike.%' + s + '%,paystack_reference.ilike.%' + s + '%');
       }
-    }).catch(function () { showGate('forbidden'); });
+      var res = await q;
+      var data = (res && res.data) || [];
+      tbody.innerHTML = data.map(function (o) {
+        var cls = o.status === 'success' ? 'success' : (o.status === 'failed' ? 'failed' : 'pending');
+        return '<tr><td>' + esc(o.paystack_reference) + '</td><td>' + esc(o.email) + '</td>' +
+          '<td>' + money(o.usd_amount) + '</td><td>' + esc(o.currency || 'USD') + '</td>' +
+          '<td><span class="order-status-badge ' + cls + '">' + esc(o.status) + '</span></td>' +
+          '<td>' + (o.created_at ? new Date(o.created_at).toLocaleDateString() : '') + '</td>' +
+          '<td><div class="table-actions">' +
+            '<button data-status="' + esc(o.id) + '" data-cur="' + esc(o.status) + '" aria-label="Change status"><i class="fa-solid fa-arrows-rotate"></i></button>' +
+          '</div></td></tr>';
+      }).join('') || '<tr><td colspan="7">No orders</td></tr>';
+    }
+
+    if (search) {
+      var deb = window.MITTELY.main.debounce(fetchList, 250);
+      if (!search.dataset.bound) { search.dataset.bound = '1'; search.addEventListener('input', deb); }
+    }
+    if (status && !status.dataset.bound) { status.dataset.bound = '1'; status.addEventListener('change', fetchList); }
+
+    if (!tbody.dataset.bound) {
+      tbody.dataset.bound = '1';
+      tbody.addEventListener('click', async function (e) {
+        var btn = e.target.closest('[data-status]');
+        if (!btn) return;
+        var id = btn.getAttribute('data-status');
+        var cur = btn.getAttribute('data-cur');
+        openConfirm('Change order status?', async function () {
+          var next = cur === 'success' ? 'pending' : 'success';
+          await window.MITTELY.supabase.from('orders').update({ status: next }).eq('id', id);
+          toast('Status updated', 'success');
+          fetchList();
+        });
+      });
+    }
+
+    await fetchList();
   }
 
-  function onReady(fn) {
-    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', fn);
-    else fn();
+  /* ---------- Reviews ---------- */
+
+  async function loadReviews() {
+    var tbody = document.getElementById('adminReviewsTable');
+    var status = document.getElementById('adminReviewStatus');
+    var bulkBtn = document.getElementById('bulkApproveReviewsBtn');
+    if (!tbody) return;
+
+    async function fetchList() {
+      var q = window.MITTELY.supabase
+        .from('reviews').select('*, products(title)')
+        .order('created_at', { ascending: false }).limit(100);
+      if (status && status.value) q = q.eq('status', status.value);
+      var res = await q;
+      var data = (res && res.data) || [];
+      tbody.innerHTML = data.map(function (r) {
+        var cls = r.status === 'approved' ? 'success' : (r.status === 'rejected' ? 'failed' : 'pending');
+        return '<tr><td>' + esc((r.products && r.products.title) || '—') + '</td><td>' + esc(r.name) + '</td>' +
+          '<td>' + (r.rating || 0) + '</td><td>' + esc((r.comment || '').slice(0, 80)) + '</td>' +
+          '<td><span class="order-status-badge ' + cls + '">' + esc(r.status) + '</span></td>' +
+          '<td><div class="table-actions">' +
+            '<button data-approve="' + esc(r.id) + '" aria-label="Approve"><i class="fa-solid fa-check"></i></button>' +
+            '<button class="danger" data-reject="' + esc(r.id) + '" aria-label="Reject"><i class="fa-solid fa-xmark"></i></button>' +
+          '</div></td></tr>';
+      }).join('') || '<tr><td colspan="6">No reviews</td></tr>';
+    }
+
+    if (status && !status.dataset.bound) { status.dataset.bound = '1'; status.addEventListener('change', fetchList); }
+
+    if (!tbody.dataset.bound) {
+      tbody.dataset.bound = '1';
+      tbody.addEventListener('click', async function (e) {
+        var ap = e.target.closest('[data-approve]');
+        var rj = e.target.closest('[data-reject]');
+        if (ap) {
+          await window.MITTELY.supabase.from('reviews').update({ status: 'approved' }).eq('id', ap.getAttribute('data-approve'));
+          toast('Review approved', 'success');
+          fetchList();
+        } else if (rj) {
+          await window.MITTELY.supabase.from('reviews').update({ status: 'rejected' }).eq('id', rj.getAttribute('data-reject'));
+          toast('Review rejected', 'info');
+          fetchList();
+        }
+      });
+    }
+
+    if (bulkBtn && !bulkBtn.dataset.bound) {
+      bulkBtn.dataset.bound = '1';
+      bulkBtn.addEventListener('click', async function () {
+        openConfirm('Approve all pending reviews?', async function () {
+          var res = await window.MITTELY.supabase.from('reviews').update({ status: 'approved' }).eq('status', 'pending');
+          if (res && res.error) { toast('Bulk approve failed', 'error'); return; }
+          toast('All pending reviews approved', 'success');
+          fetchList();
+        });
+      });
+    }
+
+    await fetchList();
   }
 
-  onReady(function () {
-    setTimeout(checkAccess, 350);
-    window.addEventListener('mittely:auth-changed', checkAccess);
-    var client = sb();
-    if (client) client.auth.onAuthStateChange(function () { setTimeout(checkAccess, 100); });
-  });
+  /* ---------- Submissions ---------- */
+
+  async function loadSubmissions() {
+    var tbody = document.getElementById('adminSubmissionsTable');
+    if (!tbody) return;
+    var res = await window.MITTELY.supabase.from('submissions').select('*').order('created_at', { ascending: false }).limit(100);
+    var data = (res && res.data) || [];
+    tbody.innerHTML = data.map(function (s) {
+      var cls = s.status === 'accepted' ? 'success' : (s.status === 'rejected' ? 'failed' : 'pending');
+      return '<tr><td>' + esc(s.designer_name) + '</td><td>' + esc(s.designer_email) + '</td>' +
+        '<td>' + esc(s.product_title) + '</td><td>' + esc(s.category) + '</td>' +
+        '<td><span class="order-status-badge ' + cls + '">' + esc(s.status) + '</span></td>' +
+        '<td><div class="table-actions">' +
+          '<button data-view="' + esc(s.id) + '" aria-label="View"><i class="fa-solid fa-eye"></i></button>' +
+          '<button data-accept="' + esc(s.id) + '" aria-label="Accept"><i class="fa-solid fa-check"></i></button>' +
+          '<button class="danger" data-reject="' + esc(s.id) + '" aria-label="Reject"><i class="fa-solid fa-xmark"></i></button>' +
+        '</div></td></tr>';
+    }).join('') || '<tr><td colspan="6">No submissions</td></tr>';
+
+    if (!tbody.dataset.bound) {
+      tbody.dataset.bound = '1';
+      tbody.addEventListener('click', async function (e) {
+        var v = e.target.closest('[data-view]');
+        var a = e.target.closest('[data-accept]');
+        var r = e.target.closest('[data-reject]');
+        if (v) {
+          var id = v.getAttribute('data-view');
+          var one = await window.MITTELY.supabase.from('submissions').select('*').eq('id', id).maybeSingle();
+          var s = one && one.data;
+          if (s) openDrawer('Submission', '<p><strong>Designer:</strong> ' + esc(s.designer_name) + '</p>' +
+            '<p><strong>Email:</strong> ' + esc(s.designer_email) + '</p>' +
+            '<p><strong>Product:</strong> ' + esc(s.product_title) + '</p>' +
+            '<p><strong>Category:</strong> ' + esc(s.category) + '</p>' +
+            '<p><strong>Description:</strong> ' + esc(s.description) + '</p>' +
+            (s.demo_url ? '<p><strong>Demo:</strong> <a href="' + esc(s.demo_url) + '" target="_blank" rel="noopener">' + esc(s.demo_url) + '</a></p>' : '') +
+            (s.portfolio_url ? '<p><strong>Portfolio:</strong> <a href="' + esc(s.portfolio_url) + '" target="_blank" rel="noopener">' + esc(s.portfolio_url) + '</a></p>' : ''));
+        } else if (a) {
+          await window.MITTELY.supabase.from('submissions').update({ status: 'accepted' }).eq('id', a.getAttribute('data-accept'));
+          toast('Accepted', 'success');
+          loadSubmissions();
+        } else if (r) {
+          await window.MITTELY.supabase.from('submissions').update({ status: 'rejected' }).eq('id', r.getAttribute('data-reject'));
+          toast('Rejected', 'info');
+          loadSubmissions();
+        }
+      });
+    }
+  }
+
+  /* ---------- Coupons ---------- */
+
+  async function loadCoupons() {
+    var tbody = document.getElementById('adminCouponsTable');
+    if (!tbody) return;
+    var res = await window.MITTELY.supabase.from('coupons').select('*').order('created_at', { ascending: false });
+    var data = (res && res.data) || [];
+    tbody.innerHTML = data.map(function (c) {
+      return '<tr><td>' + esc(c.code) + '</td><td>' + esc(c.type) + '</td>' +
+        '<td>' + (c.type === 'percent' ? c.value + '%' : money(c.value)) + '</td>' +
+        '<td>' + money(c.min_subtotal) + '</td>' +
+        '<td>' + (c.used_count || 0) + (c.max_uses ? ' / ' + c.max_uses : '') + '</td>' +
+        '<td>' + (c.expires_at ? new Date(c.expires_at).toLocaleDateString() : '—') + '</td>' +
+        '<td>' + (c.is_active ? 'Active' : 'Inactive') + '</td>' +
+        '<td><div class="table-actions">' +
+          '<button data-edit-coupon="' + esc(c.id) + '" aria-label="Edit"><i class="fa-solid fa-pen"></i></button>' +
+          '<button data-toggle-coupon="' + esc(c.id) + '" aria-label="Toggle"><i class="fa-solid fa-power-off"></i></button>' +
+          '<button class="danger" data-delete-coupon="' + esc(c.id) + '" aria-label="Delete"><i class="fa-solid fa-trash"></i></button>' +
+        '</div></td></tr>';
+    }).join('') || '<tr><td colspan="8">No coupons</td></tr>';
+
+    var newBtn = document.getElementById('newCouponBtn');
+    if (newBtn && !newBtn.dataset.bound) {
+      newBtn.dataset.bound = '1';
+      newBtn.addEventListener('click', function () { openCouponModal(null); });
+    }
+
+    if (!tbody.dataset.bound) {
+      tbody.dataset.bound = '1';
+      tbody.addEventListener('click', async function (e) {
+        var ed = e.target.closest('[data-edit-coupon]');
+        var tg = e.target.closest('[data-toggle-coupon]');
+        var dl = e.target.closest('[data-delete-coupon]');
+        if (ed) openCouponModal(ed.getAttribute('data-edit-coupon'));
+        else if (tg) {
+          var id = tg.getAttribute('data-toggle-coupon');
+          var cur = await window.MITTELY.supabase.from('coupons').select('is_active').eq('id', id).maybeSingle();
+          var active = cur && cur.data ? cur.data.is_active : true;
+          await window.MITTELY.supabase.from('coupons').update({ is_active: !active }).eq('id', id);
+          loadCoupons();
+        } else if (dl) {
+          openConfirm('Delete this coupon?', async function () {
+            await window.MITTELY.supabase.from('coupons').delete().eq('id', dl.getAttribute('data-delete-coupon'));
+            toast('Coupon deleted', 'success');
+            loadCoupons();
+          });
+        }
+      });
+    }
+  }
+
+  async function openCouponModal(id) {
+    var c = null;
+    if (id) {
+      var res = await window.MITTELY.supabase.from('coupons').select('*').eq('id', id).maybeSingle();
+      c = res && res.data;
+    }
+    var title = document.getElementById('adminEntityTitle');
+    var body = document.getElementById('adminEntityBody');
+    var footer = document.getElementById('adminEntityFooter');
+    if (title) title.textContent = c ? 'Edit coupon' : 'New coupon';
+    if (body) {
+      body.innerHTML =
+        '<div class="form-group"><label>Code</label><input type="text" id="c_code" value="' + esc(c ? c.code : '') + '"></div>' +
+        '<div class="form-group"><label>Type</label><select id="c_type"><option value="percent"' + (c && c.type === 'percent' ? ' selected' : '') + '>percent</option><option value="fixed"' + (c && c.type === 'fixed' ? ' selected' : '') + '>fixed</option></select></div>' +
+        '<div class="form-group"><label>Value</label><input type="number" step="0.01" id="c_value" value="' + esc(c ? c.value : '') + '"></div>' +
+        '<div class="form-group"><label>Min subtotal (USD)</label><input type="number" step="0.01" id="c_min" value="' + esc(c ? c.min_subtotal : 0) + '"></div>' +
+        '<div class="form-group"><label>Max uses</label><input type="number" id="c_max" value="' + esc(c ? (c.max_uses || '') : '') + '"></div>' +
+        '<div class="form-group"><label>Expires at</label><input type="datetime-local" id="c_expires" value="' + esc(c && c.expires_at ? c.expires_at.slice(0, 16) : '') + '"></div>';
+    }
+    if (footer) {
+      footer.innerHTML = '<button class="btn btn-outline" id="couponCancel">Cancel</button><button class="btn btn-primary" id="couponSave">Save</button>';
+      document.getElementById('couponCancel').addEventListener('click', function () { closeModal('adminEntityModal'); });
+      document.getElementById('couponSave').addEventListener('click', function () { saveCoupon(id); });
+    }
+    openModal('adminEntityModal');
+  }
+
+  async function saveCoupon(id) {
+    try {
+      var payload = {
+        code: (val('c_code') || '').toUpperCase().trim(),
+        type: val('c_type'),
+        value: parseFloat(val('c_value')) || 0,
+        min_subtotal: parseFloat(val('c_min')) || 0,
+        max_uses: val('c_max') ? parseInt(val('c_max'), 10) : null,
+        expires_at: val('c_expires') ? new Date(val('c_expires')).toISOString() : null
+      };
+      if (!payload.code) throw new Error('Code required');
+      if (payload.value <= 0) throw new Error('Value must be > 0');
+      var res = id
+        ? await window.MITTELY.supabase.from('coupons').update(payload).eq('id', id)
+        : await window.MITTELY.supabase.from('coupons').insert(payload);
+      if (res && res.error) throw res.error;
+      toast('Coupon saved', 'success');
+      closeModal('adminEntityModal');
+      loadCoupons();
+    } catch (e) { toast((e && e.message) || 'Save failed', 'error'); }
+  }
+
+  /* ---------- Blog ---------- */
+
+  async function loadBlog() {
+    var tbody = document.getElementById('adminBlogTable');
+    if (!tbody) return;
+    var res = await window.MITTELY.supabase.from('blog_posts').select('*').order('created_at', { ascending: false });
+    var data = (res && res.data) || [];
+    tbody.innerHTML = data.map(function (b) {
+      return '<tr><td>' + esc(b.title) + '</td><td>' + esc(b.slug) + '</td>' +
+        '<td>' + esc(b.status) + '</td><td>' + (b.views_count || 0) + '</td>' +
+        '<td>' + (b.created_at ? new Date(b.created_at).toLocaleDateString() : '') + '</td>' +
+        '<td><div class="table-actions">' +
+          '<button data-edit-post="' + esc(b.id) + '" aria-label="Edit"><i class="fa-solid fa-pen"></i></button>' +
+          '<button class="danger" data-delete-post="' + esc(b.id) + '" aria-label="Delete"><i class="fa-solid fa-trash"></i></button>' +
+        '</div></td></tr>';
+    }).join('') || '<tr><td colspan="6">No posts</td></tr>';
+
+    var newBtn = document.getElementById('newPostBtn');
+    if (newBtn && !newBtn.dataset.bound) {
+      newBtn.dataset.bound = '1';
+      newBtn.addEventListener('click', function () { openPostModal(null); });
+    }
+
+    if (!tbody.dataset.bound) {
+      tbody.dataset.bound = '1';
+      tbody.addEventListener('click', function (e) {
+        var ed = e.target.closest('[data-edit-post]');
+        var dl = e.target.closest('[data-delete-post]');
+        if (ed) openPostModal(ed.getAttribute('data-edit-post'));
+        else if (dl) {
+          openConfirm('Delete this post? Type the title to confirm.', async function (typed) {
+            var id = dl.getAttribute('data-delete-post');
+            var one = await window.MITTELY.supabase.from('blog_posts').select('title').eq('id', id).maybeSingle();
+            var t = one && one.data ? one.data.title : '';
+            if (typed !== t) { toast('Title mismatch', 'error'); return; }
+            await window.MITTELY.supabase.from('blog_posts').delete().eq('id', id);
+            toast('Post deleted', 'success');
+            loadBlog();
+          });
+        }
+      });
+    }
+  }
+
+  async function openPostModal(id) {
+    var b = null;
+    if (id) {
+      var res = await window.MITTELY.supabase.from('blog_posts').select('*').eq('id', id).maybeSingle();
+      b = res && res.data;
+    }
+    var title = document.getElementById('adminEntityTitle');
+    var body = document.getElementById('adminEntityBody');
+    var footer = document.getElementById('adminEntityFooter');
+    if (title) title.textContent = b ? 'Edit post' : 'New post';
+    if (body) {
+      body.innerHTML =
+        '<div class="form-group"><label>Title</label><input type="text" id="p_title" value="' + esc(b ? b.title : '') + '"></div>' +
+        '<div class="form-group"><label>Slug</label><input type="text" id="p_slug" value="' + esc(b ? b.slug : '') + '" placeholder="auto-slug"></div>' +
+        '<div class="form-group"><label>Excerpt</label><input type="text" id="p_excerpt" value="' + esc(b ? b.excerpt : '') + '"></div>' +
+        '<div class="form-group"><label>Content (HTML allowed)</label><textarea id="p_content" rows="8">' + esc(b ? b.content : '') + '</textarea></div>' +
+        '<div class="form-group"><label>Cover image URL</label><input type="url" id="p_cover" value="' + esc(b ? b.cover_image : '') + '"></div>' +
+        '<div class="form-group"><label>Tags (comma separated)</label><input type="text" id="p_tags" value="' + esc(b ? b.tags : '') + '"></div>' +
+        '<div class="form-group"><label>Author name</label><input type="text" id="p_author" value="' + esc(b ? b.author_name : '') + '"></div>' +
+        '<div class="form-group"><label>Meta title</label><input type="text" id="p_meta_title" value="' + esc(b ? b.meta_title : '') + '"></div>' +
+        '<div class="form-group"><label>Meta description</label><input type="text" id="p_meta_desc" value="' + esc(b ? b.meta_description : '') + '"></div>' +
+        '<div class="form-group"><label>Status</label><select id="p_status"><option value="draft"' + (b && b.status === 'draft' ? ' selected' : '') + '>Draft</option><option value="published"' + (b && b.status === 'published' ? ' selected' : '') + '>Published</option></select></div>';
+    }
+    if (footer) {
+      footer.innerHTML = '<button class="btn btn-outline" id="postCancel">Cancel</button><button class="btn btn-primary" id="postSave">Save</button>';
+      document.getElementById('postCancel').addEventListener('click', function () { closeModal('adminEntityModal'); });
+      document.getElementById('postSave').addEventListener('click', function () { savePost(id); });
+    }
+    openModal('adminEntityModal');
+  }
+
+  async function savePost(id) {
+    try {
+      var payload = {
+        title: val('p_title'),
+        slug: val('p_slug') || slugify(val('p_title')),
+        excerpt: val('p_excerpt'),
+        content: val('p_content'),
+        cover_image: val('p_cover'),
+        tags: val('p_tags'),
+        author_name: val('p_author'),
+        meta_title: val('p_meta_title'),
+        meta_description: val('p_meta_desc'),
+        status: val('p_status'),
+        updated_at: new Date().toISOString()
+      };
+      if (!payload.title) throw new Error('Title required');
+      var res = id
+        ? await window.MITTELY.supabase.from('blog_posts').update(payload).eq('id', id)
+        : await window.MITTELY.supabase.from('blog_posts').insert(payload);
+      if (res && res.error) throw res.error;
+      toast('Post saved', 'success');
+      closeModal('adminEntityModal');
+      loadBlog();
+    } catch (e) { toast((e && e.message) || 'Save failed', 'error'); }
+  }
+
+  /* ---------- Users ---------- */
+
+  async function loadUsers() {
+    var tbody = document.getElementById('adminUsersTable');
+    var search = document.getElementById('adminUserSearch');
+    var pag = document.getElementById('adminUsersPagination');
+    if (!tbody) return;
+
+    async function fetchList() {
+      var res = await window.MITTELY.supabase.rpc('admin_list_users');
+      var data = (res && res.data) || [];
+      if (Array.isArray(data) && data.length && Array.isArray(data[0])) data = data[0];
+      var q = (search && search.value.trim() || '').toLowerCase();
+      if (q) {
+        data = data.filter(function (u) {
+          return (u.email || '').toLowerCase().indexOf(q) !== -1 || (u.name || '').toLowerCase().indexOf(q) !== -1;
+        });
+      }
+      var perPage = 20;
+      var total = data.length;
+      var pages = Math.max(1, Math.ceil(total / perPage));
+      if (usersPage > pages) usersPage = pages;
+      var slice = data.slice((usersPage - 1) * perPage, usersPage * perPage);
+      tbody.innerHTML = slice.map(function (u) {
+        return '<tr><td>' + esc(u.name || '—') + '</td><td>' + esc(u.email) + '</td>' +
+          '<td>' + (u.orders_count || 0) + '</td><td>' + money(u.total_spent_usd || 0) + '</td>' +
+          '<td>' + (u.downloads_count || 0) + '</td>' +
+          '<td>' + (u.created_at ? new Date(u.created_at).toLocaleDateString() : '') + '</td>' +
+          '<td><div class="table-actions"><button data-user="' + esc(u.id) + '" data-email="' + esc(u.email) + '"><i class="fa-solid fa-eye"></i></button></div></td></tr>';
+      }).join('') || '<tr><td colspan="7">No users</td></tr>';
+
+      if (pag) {
+        var html = '';
+        for (var i = 1; i <= pages; i++) html += '<button class="chip' + (i === usersPage ? ' active' : '') + '" data-page="' + i + '">' + i + '</button>';
+        pag.innerHTML = pages > 1 ? html : '';
+      }
+    }
+
+    if (search && !search.dataset.bound) {
+      search.dataset.bound = '1';
+      var deb = window.MITTELY.main.debounce(function () { usersPage = 1; fetchList(); }, 250);
+      search.addEventListener('input', deb);
+    }
+    if (pag && !pag.dataset.bound) {
+      pag.dataset.bound = '1';
+      pag.addEventListener('click', function (e) {
+        var b = e.target.closest('[data-page]');
+        if (!b) return;
+        usersPage = parseInt(b.getAttribute('data-page'), 10) || 1;
+        fetchList();
+      });
+    }
+    if (!tbody.dataset.bound) {
+      tbody.dataset.bound = '1';
+      tbody.addEventListener('click', async function (e) {
+        var b = e.target.closest('[data-user]');
+        if (!b) return;
+        var email = b.getAttribute('data-email');
+        var ordersRes = await window.MITTELY.supabase.from('orders').select('*').eq('email', email).order('created_at', { ascending: false });
+        var actRes = await window.MITTELY.supabase.from('activity_log').select('*').eq('email', email).order('created_at', { ascending: false }).limit(20);
+        var orders = (ordersRes && ordersRes.data) || [];
+        var acts = (actRes && actRes.data) || [];
+        openDrawer('User detail',
+          '<h3>' + esc(email) + '</h3>' +
+          '<h4 style="margin-top:16px;">Orders</h4>' +
+          (orders.length ? orders.map(function (o) { return '<div style="padding:8px 0;border-bottom:1px solid var(--border);">' + esc(o.paystack_reference) + ' · ' + money(o.usd_amount) + ' · ' + esc(o.status) + '</div>'; }).join('') : '<p>No orders</p>') +
+          '<h4 style="margin-top:16px;">Activity</h4>' +
+          (acts.length ? '<ul class="activity-feed">' + acts.map(activityItemHtml).join('') + '</ul>' : '<p>No activity</p>'));
+      });
+    }
+
+    await fetchList();
+  }
+
+  /* ---------- Activity ---------- */
+
+  async function loadActivity() {
+    var feed = document.getElementById('adminActivityFeed');
+    var pag = document.getElementById('adminActivityPagination');
+    var filters = document.getElementById('activityFilters');
+    if (!feed) return;
+    var PER = 20;
+
+    async function fetchList() {
+      var q = window.MITTELY.supabase.from('activity_log').select('*', { count: 'exact' }).order('created_at', { ascending: false });
+      if (activityFilter.event) q = q.eq('event', activityFilter.event);
+      if (activityFilter.date) {
+        var start = new Date(activityFilter.date + 'T00:00:00').toISOString();
+        var end = new Date(activityFilter.date + 'T23:59:59').toISOString();
+        q = q.gte('created_at', start).lte('created_at', end);
+      }
+      var from = (activityPage - 1) * PER;
+      q = q.range(from, from + PER - 1);
+      var res = await q;
+      var data = (res && res.data) || [];
+      var total = (res && res.count) || 0;
+      feed.innerHTML = data.length ? data.map(activityItemHtml).join('') : '<li>No activity</li>';
+      if (pag) {
+        var pages = Math.max(1, Math.ceil(total / PER));
+        var html = '';
+        for (var i = 1; i <= pages; i++) html += '<button class="chip' + (i === activityPage ? ' active' : '') + '" data-page="' + i + '">' + i + '</button>';
+        pag.innerHTML = pages > 1 ? html : '';
+      }
+    }
+
+    if (filters && !filters.dataset.bound) {
+      filters.dataset.bound = '1';
+      filters.addEventListener('click', function (e) {
+        var chip = e.target.closest('.chip');
+        if (chip) {
+          filters.querySelectorAll('.chip').forEach(function (c) { c.classList.remove('active'); });
+          chip.classList.add('active');
+          activityFilter.event = chip.getAttribute('data-event') || '';
+          activityPage = 1;
+          fetchList();
+        }
+      });
+      var dateInput = document.getElementById('activityDate');
+      if (dateInput) {
+        dateInput.addEventListener('change', function () {
+          activityFilter.date = dateInput.value || '';
+          activityPage = 1;
+          fetchList();
+        });
+      }
+    }
+    if (pag && !pag.dataset.bound) {
+      pag.dataset.bound = '1';
+      pag.addEventListener('click', function (e) {
+        var b = e.target.closest('[data-page]');
+        if (!b) return;
+        activityPage = parseInt(b.getAttribute('data-page'), 10) || 1;
+        fetchList();
+      });
+    }
+
+    await fetchList();
+  }
+
+  /* ---------- Newsletter ---------- */
+
+  async function loadNewsletter() {
+    var tbody = document.getElementById('adminNewsletterTable');
+    var count = document.getElementById('newsletterCount');
+    var exportBtn = document.getElementById('exportNewsletterBtn');
+    if (!tbody) return;
+    var res = await window.MITTELY.supabase.from('newsletter').select('*').order('created_at', { ascending: false });
+    var data = (res && res.data) || [];
+    if (count) count.textContent = String(data.length);
+    tbody.innerHTML = data.map(function (n) {
+      return '<tr><td>' + esc(n.email) + '</td><td>' + (n.created_at ? new Date(n.created_at).toLocaleDateString() : '') + '</td>' +
+        '<td><div class="table-actions"><button class="danger" data-del="' + esc(n.id) + '"><i class="fa-solid fa-trash"></i></button></div></td></tr>';
+    }).join('') || '<tr><td colspan="3">No subscribers</td></tr>';
+
+    if (!tbody.dataset.bound) {
+      tbody.dataset.bound = '1';
+      tbody.addEventListener('click', async function (e) {
+        var b = e.target.closest('[data-del]');
+        if (!b) return;
+        openConfirm('Delete this subscriber?', async function () {
+          await window.MITTELY.supabase.from('newsletter').delete().eq('id', b.getAttribute('data-del'));
+          toast('Deleted', 'success');
+          loadNewsletter();
+        });
+      });
+    }
+
+    if (exportBtn && !exportBtn.dataset.bound) {
+      exportBtn.dataset.bound = '1';
+      exportBtn.addEventListener('click', function () {
+        var csv = 'email,subscribed\n' + data.map(function (n) {
+          return '"' + (n.email || '') + '","' + (n.created_at || '') + '"';
+        }).join('\n');
+        var blob = new Blob([csv], { type: 'text/csv' });
+        var url = URL.createObjectURL(blob);
+        var a = document.createElement('a');
+        a.href = url; a.download = 'mittely-newsletter.csv';
+        document.body.appendChild(a); a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      });
+    }
+  }
+
+  /* ---------- Settings ---------- */
+
+  async function loadSettings() {
+    var res = await window.MITTELY.supabase.from('settings').select('skey, svalue');
+    var data = (res && res.data) || [];
+    var map = {};
+    data.forEach(function (r) { map[r.skey] = r.svalue; });
+
+    var hot = document.getElementById('settingHotSaleToggle');
+    var hotEnds = document.getElementById('settingHotSaleEnds');
+    var bf = document.getElementById('settingBlackFridayToggle');
+    var ann = document.getElementById('settingAnnouncement');
+    var hero = document.getElementById('settingHeroHeadline');
+    var fx = document.getElementById('settingFxFallback');
+    var gh = document.getElementById('settingGithub');
+    var x = document.getElementById('settingX');
+    var tg = document.getElementById('settingTelegram');
+    var ig = document.getElementById('settingInstagram');
+    var li = document.getElementById('settingLinkedin');
+    var yt = document.getElementById('settingYoutube');
+    var dc = document.getElementById('settingDiscord');
+
+    if (hot) hot.checked = map.hot_sale_mode === 'on';
+    if (hotEnds) hotEnds.value = map.hot_sale_ends_at ? map.hot_sale_ends_at.slice(0, 16) : '';
+    if (bf) bf.checked = map.black_friday_mode === 'on';
+    if (ann) ann.value = map.announcement_bar || '';
+    if (hero) hero.value = map.hero_headline || '';
+    if (fx) fx.value = map.fx_fallback_rate || '15.50';
+    if (gh) gh.value = map.github_url || '';
+    if (x) x.value = map.x_url || '';
+    if (tg) tg.value = map.telegram_url || '';
+    if (ig) ig.value = map.instagram_url || '';
+    if (li) li.value = map.linkedin_url || '';
+    if (yt) yt.value = map.youtube_url || '';
+    if (dc) dc.value = map.discord_url || '';
+
+    var saveBtn = document.getElementById('saveSettingsBtn');
+    if (saveBtn && !saveBtn.dataset.bound) {
+      saveBtn.dataset.bound = '1';
+      saveBtn.addEventListener('click', async function () {
+        setLoading(saveBtn, true);
+        try {
+          var entries = {
+            hot_sale_mode: hot && hot.checked ? 'on' : 'off',
+            hot_sale_ends_at: hotEnds ? hotEnds.value : '',
+            black_friday_mode: bf && bf.checked ? 'on' : 'off',
+            announcement_bar: ann ? ann.value : '',
+            hero_headline: hero ? hero.value : '',
+            fx_fallback_rate: fx ? fx.value : '15.50'
+          };
+          await upsertSettings(entries);
+          toast('Settings saved', 'success');
+        } catch (e) { toast('Save failed', 'error'); }
+        finally { setLoading(saveBtn, false); }
+      });
+    }
+
+    var saveSocial = document.getElementById('saveSocialBtn');
+    if (saveSocial && !saveSocial.dataset.bound) {
+      saveSocial.dataset.bound = '1';
+      saveSocial.addEventListener('click', async function () {
+        setLoading(saveSocial, true);
+        try {
+          await upsertSettings({
+            github_url: gh ? gh.value : '',
+            x_url: x ? x.value : '',
+            telegram_url: tg ? tg.value : '',
+            instagram_url: ig ? ig.value : '',
+            linkedin_url: li ? li.value : '',
+            youtube_url: yt ? yt.value : '',
+            discord_url: dc ? dc.value : ''
+          });
+          toast('Socials saved', 'success');
+        } catch (e) { toast('Save failed', 'error'); }
+        finally { setLoading(saveSocial, false); }
+      });
+    }
+  }
+
+  async function upsertSettings(entries) {
+    var rows = Object.keys(entries).map(function (k) { return { skey: k, svalue: String(entries[k] || '') }; });
+    var res = await window.MITTELY.supabase.from('settings').upsert(rows, { onConflict: 'skey' });
+    if (res && res.error) throw res.error;
+  }
+
+  /* ---------- Admins ---------- */
+
+  async function loadAdmins() {
+    var tbody = document.getElementById('adminAdminsTable');
+    var addBtn = document.getElementById('addAdminBtn');
+    if (!tbody) return;
+    var res = await window.MITTELY.supabase.from('admin_users').select('*').order('email');
+    var data = (res && res.data) || [];
+    tbody.innerHTML = data.map(function (a) {
+      var isOwner = a.email === OWNER_EMAIL;
+      return '<tr><td>' + esc(a.email) + (isOwner ? ' <span class="coupon-badge-sm">owner</span>' : '') + '</td>' +
+        '<td>' + (isOwner ? '<span class="text-muted">Protected</span>' :
+          '<div class="table-actions"><button class="danger" data-remove-admin="' + esc(a.email) + '"><i class="fa-solid fa-trash"></i></button></div>') + '</td></tr>';
+    }).join('') || '<tr><td colspan="2">No admins</td></tr>';
+
+    if (!tbody.dataset.bound) {
+      tbody.dataset.bound = '1';
+      tbody.addEventListener('click', function (e) {
+        var b = e.target.closest('[data-remove-admin]');
+        if (!b) return;
+        var email = b.getAttribute('data-remove-admin');
+        if (email === OWNER_EMAIL) { toast('Owner cannot be removed', 'error'); return; }
+        openConfirm('Remove admin ' + email + '?', async function () {
+          var del = await window.MITTELY.supabase.from('admin_users').delete().eq('email', email);
+          if (del && del.error) { toast('Remove failed', 'error'); return; }
+          toast('Admin removed', 'success');
+          loadAdmins();
+        });
+      });
+    }
+
+    if (addBtn && !addBtn.dataset.bound) {
+      addBtn.dataset.bound = '1';
+      addBtn.addEventListener('click', async function () {
+        var input = document.getElementById('newAdminEmail');
+        var email = input ? input.value.trim() : '';
+        if (!email || email.indexOf('@') === -1) { toast('Valid email required', 'error'); return; }
+        var ins = await window.MITTELY.supabase.from('admin_users').insert({ email: email });
+        if (ins && ins.error) { toast('Add failed', 'error'); return; }
+        toast('Admin added', 'success');
+        if (input) input.value = '';
+        loadAdmins();
+      });
+    }
+  }
+
+  /* ---------- Modals & confirm ---------- */
+
+  function openModal(id) {
+    var m = document.getElementById(id);
+    if (!m) return;
+    m.style.display = 'flex';
+    document.body.style.overflow = 'hidden';
+    var close = m.querySelector('.modal-close');
+    if (close && !close.dataset.bound) {
+      close.dataset.bound = '1';
+      close.addEventListener('click', function () { closeModal(id); });
+    }
+    m.addEventListener('click', function (e) { if (e.target === m) closeModal(id); });
+  }
+
+  function closeModal(id) {
+    var m = document.getElementById(id);
+    if (!m) return;
+    m.style.display = 'none';
+    document.body.style.overflow = '';
+  }
+
+  function openDrawer(title, html) {
+    var t = document.getElementById('adminDrawerTitle');
+    var b = document.getElementById('adminDrawerBody');
+    if (t) t.textContent = title;
+    if (b) b.innerHTML = html;
+    openModal('adminDrawerModal');
+  }
+
+  function openConfirm(message, onOk) {
+    var title = document.getElementById('confirmTitle');
+    var msg = document.getElementById('confirmMessage');
+    var body = document.getElementById('confirmBody');
+    var ok = document.getElementById('confirmOkBtn');
+    var cancel = document.getElementById('confirmCancelBtn');
+    if (msg) msg.textContent = message;
+    if (body) {
+      var needsTyped = /type the/i.test(message);
+      body.innerHTML = needsTyped ? '<div class="form-group"><label>Type to confirm</label><input type="text" id="confirmTyped"></div>' : '';
+    }
+    if (ok) {
+      var clone = ok.cloneNode(true);
+      ok.parentNode.replaceChild(clone, ok);
+      clone.addEventListener('click', async function () {
+        var typed = '';
+        var input = document.getElementById('confirmTyped');
+        if (input) typed = input.value.trim();
+        closeModal('confirmModal');
+        try { await onOk(typed); } catch (e) { /* handled */ }
+      });
+    }
+    if (cancel && !cancel.dataset.bound) {
+      cancel.dataset.bound = '1';
+      cancel.addEventListener('click', function () { closeModal('confirmModal'); });
+    }
+    openModal('confirmModal');
+  }
+
+  window.MITTELY.admin = { init: init };
 })();
